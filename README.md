@@ -1,3 +1,46 @@
+dent-bot/
+├── src/dentbot/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── config.py
+│   ├── base_config.py
+│   ├── exceptions.py
+│   ├── llm.py
+│   ├── prompts.py
+│   │
+│   ├── models/                    # 🆕 Veri modelleri
+│   │   ├── __init__.py
+│   │   ├── appointment.py
+│   │   ├── dentist.py
+│   │   └── treatment.py
+│   │
+│   ├── services/                  # 🆕 İş mantığı katmanı
+│   │   ├── __init__.py
+│   │   ├── approval_service.py   # 🔥 En kritik
+│   │   ├── notification_service.py
+│   │   └── slot_service.py
+│   │
+│   ├── tools/                     # ✏️ Parçalanmış araçlar
+│   │   ├── __init__.py
+│   │   ├── appointment_tools.py
+│   │   ├── dentist_tools.py
+│   │   ├── slot_tools.py
+│   │   └── treatment_tools.py
+│   │
+│   ├── channels/
+│   │   ├── __init__.py
+│   │   ├── telegram.py
+│   │   └── dentist_panel.py      # 🆕 Doktor için ayrı bot/panel
+│   │
+│   └── adapters/
+│       ├── __init__.py
+│       ├── base.py
+│       ├── sqlite_adapter.py
+│       └── calendar_adapter.py
+│
+├── tests/
+├── .env.example
+└── README.md
 # hotel_bot
 
 AI destekli çok-kanal otel rezervasyon asistanı. Modern Python, Groq (Llama), özelleştirilebilir adapter ve tool mimarisi ile Telegram başta olmak üzere birden fazla platformdan kullanılabilir.

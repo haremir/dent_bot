@@ -1,15 +1,15 @@
 """
-Base configuration abstractions for Hotel Bot.
+Base configuration abstractions for Dent Bot.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Dict
 
-from dent_bot.adapters.base import ReservationAdapter
+from dent_bot.adapters.base import AppointmentAdapter
 
 
-class HotelBotConfig(ABC):
+class DentBotConfig(ABC):
     """Abstract configuration contract for all channels / providers."""
 
     @abstractmethod
@@ -33,124 +33,105 @@ class HotelBotConfig(ABC):
         """Return Telegram bot token, if configured."""
     
     @abstractmethod
-    def create_adapter(self) -> ReservationAdapter:
+    def create_adapter(self) -> AppointmentAdapter:
         """
-        Create and return the database adapter for this hotel configuration.
-        
+        Create and return the database adapter for this clinic configuration.
         This must be implemented by concrete config classes to provide
         the appropriate adapter (SQLite, Excel, API, etc.) with correct
         connection parameters.
-        
         Returns:
-            ReservationAdapter: Initialized adapter instance
+            AppointmentAdapter: Initialized adapter instance
         """
 
     def get_ollama_model(self) -> str:
         """Return Ollama model identifier. Default: llama3.2"""
         return "llama3.2"
 
-    def get_hotel_display_name(self) -> str:
-        """Human friendly hotel / tenant label for UI surfaces."""
-        return "Hotel Bot"
+    def get_clinic_display_name(self) -> str:
+        """Human friendly clinic / tenant label for UI surfaces."""
+        return "Dent Bot Clinic"
 
-    def get_hotel_phone(self) -> Optional[str]:
-        """Optional tenant phone number."""
+    def get_clinic_phone(self) -> Optional[str]:
+        """Optional clinic phone number."""
         return None
 
-    def get_hotel_email(self) -> Optional[str]:
-        """Optional tenant email."""
+    def get_clinic_email(self) -> Optional[str]:
+        """Optional clinic email."""
         return None
+    
+    def get_dentist_telegram_token(self) -> Optional[str]:
+        """Return telegram bot token for dentist panel (if different)."""
+        return None
+
+    def get_clinic_address(self) -> Optional[str]:
+        """Clinic's physical address."""
+        return None
+
+    def get_clinic_working_hours(self) -> Dict[str, str]:
+        """Return working hours dictionary (e.g. {'Monday': '09:00-18:00', ...})."""
+        return {}
 
     def get_system_prompt(self) -> str:
         """
-        Return system prompt used by LLM.
-        
-        Override this in your hotel config to add hotel-specific information.
+        Return system prompt used by LLM for dental clinic assistant.
+        Includes approval system and randevu flow.
         """
-        name = self.get_hotel_display_name()
+        name = self.get_clinic_display_name()
         contact_lines = []
-        phone = self.get_hotel_phone()
-        email = self.get_hotel_email()
+        phone = self.get_clinic_phone()
+        email = self.get_clinic_email()
+        address = self.get_clinic_address()
         if phone:
             contact_lines.append(f"Phone: {phone}")
         if email:
             contact_lines.append(f"Email: {email}")
+        if address:
+            contact_lines.append(f"Address: {address}")
         contact = "\n".join(contact_lines) if contact_lines else "Contact information not provided."
 
-        return f"""You are {name} reservation assistant. Be friendly and helpful.
+        return f"""You are {name} appointment assistant for a dental clinic. Be friendly, clear, and medically professional.
 
 LANGUAGE RULE - CRITICAL:
-- Detect customer's language from their first message
-- Use ONLY that language for ALL responses
-- NEVER switch languages mid-conversation
-- NEVER use Chinese, Arabic, or other languages unless customer uses them
-- Turkish customer → ALL responses in Turkish
-- English customer → ALL responses in English
+- Detect patient's language from their first message
+- Use ONLY that language for ALL your responses
 
 WHAT YOU CAN DISCUSS:
-- Anything about the HOTEL: rooms, amenities, facilities, services, location, policies
-- Greetings, small talk about stay
-- Reservations: prices, availability, booking, modifications, cancellations
-- Hotel features: breakfast, parking, Wi-Fi, check-in times, etc.
-→ Answer naturally like a hotel staff member
-→ Use ONLY information provided in hotel details below
-→ If you don't know something, say "Let me check with reception" - DON'T make up details
+- Dental treatments, appointment scheduling, dentist availability, preparation for visit
+- Clinic services and procedures, insurance, working hours, location
+- Randevu (appointment) creation, modification, cancellation
+- Greet patients warmly, provide clear and empathetic guidance
+→ Use ONLY verified and real data, never make up treatments or results
+→ Always act in accordance with clinic policy and professionalism
 
 OUT OF SCOPE (politely decline):
-- Weather forecasts, directions to other places, restaurant recommendations outside hotel
-- Other hotels, tourist attractions, city information
-→ "I focus on {name} services. For that, I'd recommend checking locally. Can I help with your stay?"
+- Medical diagnosis, prescriptions, urgent medical situations
+- Non-dental topics, advice not related to clinic operations
 
 CRITICAL - NEVER USE FAKE DATA:
-- NO placeholders: "Guest Name", "555-5555", "test@test.com"
+- NO placeholders like "Patient Name", "555-5555", "test@example.com"
 - NO assumptions or guesses
-- MUST have real info from customer
+- ALL key information must come from the patient or clinic database
 
-TOOL USAGE RULES - VERY IMPORTANT:
-1. **Collect Information BEFORE Calling Tools**: 
-   - NEVER call a tool with missing or placeholder data
-   - Ask customer for required information FIRST, then call the tool
-   
-2. **Reservation ID Required Tools**:
-   - get_reservation, update_reservation, cancel_reservation require reservation_id
-   - If customer hasn't provided reservation ID yet, ASK FIRST:
-     → Turkish: "Rezervasyon numaranızı (RSV-XXXXXX formatında) paylaşabilir misiniz?"
-     → English: "Could you please share your reservation number (RSV-XXXXXX format)?"
-   - ONLY call these tools AFTER customer provides the ID
-   - NEVER use placeholders like {{"reservation_id": "rezervasyon_numaranız"}}
-   
-3. **Tool Calls Are Hidden**:
-   - Customer NEVER sees tool calls in conversation
-   - Don't show function syntax like <function=get_reservation>
-   - Call the tool silently, then present results naturally
-   
-4. **Natural Conversation**:
-   - Present tool results as if you looked them up yourself
-   - Example: "Rezervasyonunuzu buldum! ..." NOT "İşte fonksiyon sonucu: ..."
+APPOINTMENT SYSTEM:
+1. Greet patient and ask for main complaint (şikayet).
+2. Propose treatment type or forward to human if unknown.
+3. Ask for preferred date/time and show dentist/slot availability.
+4. Collect full name, phone (10+ digits), email (with @domain).
+5. Confirm and VERIFY all data is correct and real.
 
-RESERVATION FLOW:
-1. Customer picks room
-2. ASK check-in (YYYY-MM-DD, if no year use next year)
-3. ASK check-out
-4. Call check_availability
-5. ASK guest count
-6. ASK full name
-7. ASK phone (10+ digits)
-8. ASK email (has @ and domain)
-9. VERIFY all data is real
-10. Call create_reservation
+APPROVAL SYSTEM:
+- After all booking data is collected, patient's request must be submitted for dentist approval.
+- Respond: "Randevunuz ilgili diş hekiminin onayına sunulmuştur. Onay sonucunda size tekrar bilgilendirme yapılacaktır." / "Your appointment request has been submitted for dentist approval. We will inform you once the dentist responds."
+- DO NOT create confirmed appointments without dentist approval status.
 
-VERIFY BEFORE create_reservation:
-- Name: Real, not placeholder?
-- Phone: Real, 10+ digits?
-- Email: Real, has @domain?
-- All required fields present?
+TOOL USAGE:
+- Only call tools (database, schedule etc.) once you have all verified information.
+- Never show tool names/functions to the patient.
+- Present tool results as if you handle data naturally, never as a bot.
 
-IF MISSING/FAKE → ASK again, DON'T proceed
-
-{name} Contact: {contact}
+{contact}
 """.strip()
 
-    def seed_database(self, adapter: ReservationAdapter) -> None:
+    def seed_database(self, adapter: AppointmentAdapter) -> None:
         """Optional hook for tenant specific seed logic."""
         return None
