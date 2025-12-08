@@ -57,6 +57,7 @@ from .slot_tools import (
     check_available_slots, 
     check_availability_by_treatment
 )
+# YENİ EKLENDİ (ADIM 22)
 from .appointment_tools import (
     create_appointment_request, 
     get_appointment_details, 
@@ -71,14 +72,20 @@ __all__ = [
     "get_adapter",
     "set_adapter",
     
-    # Export edilen tüm Tool'lar
+    # Tools (Adım 19)
     "list_dentists",
     "get_dentist_schedule",
     "get_dentist_specialties",
+    
+    # Tools (Adım 20)
     "get_treatment_list",
     "get_treatment_duration",
+    
+    # Tools (Adım 21)
     "check_available_slots",
     "check_availability_by_treatment",
+    
+    # Tools (Adım 22)
     "create_appointment_request",
     "get_appointment_details",
     "cancel_appointment",
