@@ -1,40 +1,60 @@
-"""Hotel Bot Core - Multi-tenant reservation system"""
+"""Dent Bot Core - Multi-tenant appointment system"""
 
 __version__ = "0.1.0"
 
 # Core abstractions
-from dent_bot.base_config import HotelBotConfig
-from dent_bot.exceptions import HotelBotError, ConfigurationError, DatabaseError
+# ⭐ İsimler güncellendi
+from .base_config import DentBotConfig
+
+# Exceptions
+# ⭐ Yeni exceptionlar eklendi
+from .exceptions import (
+    DentBotError, 
+    ConfigurationError, 
+    DatabaseError, 
+    AdapterError,
+    ChannelError,
+    AppointmentError,
+    ApprovalError,
+)
 
 # Config management
-from dent_bot.config import get_config, set_config
+from .config import get_config, set_config
 
 # Adapters
-from dent_bot.adapters.base import ReservationAdapter
-from dent_bot.adapters.sqlite_adapter import SQLiteReservationAdapter
+# ⭐ İsimler güncellendi
+from .adapters.base import AppointmentAdapter
+from .adapters.sqlite_adapter import SQLiteAppointmentAdapter
 
 # Tools
-from dent_bot.tools import get_adapter, set_adapter
+# ⭐ İsimler güncellendi
+from .tools import get_adapter, set_adapter
 
 __all__ = [
     # Version
     "__version__",
     
     # Core
-    "HotelBotConfig",
+    "DentBotConfig",
     
     # Exceptions
-    "HotelBotError",
+    "DentBotError",
     "ConfigurationError", 
     "DatabaseError",
+    "AdapterError",
+    "ChannelError",
+    "AppointmentError",
+    "ApprovalError",
     
     # Config
     "get_config",
     "set_config",
     
     # Adapters
-    "ReservationAdapter",
-    "SQLiteReservationAdapter",
+    "AppointmentAdapter",
+    "SQLiteAppointmentAdapter",
+    
+    # Tool Utilities
     "get_adapter",
     "set_adapter",
 ]
