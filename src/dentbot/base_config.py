@@ -4,36 +4,17 @@ Base configuration abstractions for Dent Bot.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Dict # ⭐ Düzeltme: Dict import edildi
 
-# ÖNEMLİ: Import'lar güncellendi
 from dentbot.adapters.base import AppointmentAdapter
 
 
-# HotelBotConfig yerine DentBotConfig
 class DentBotConfig(ABC):
     """Abstract configuration contract for all channels / providers."""
 
     @abstractmethod
     def get_database_url(self) -> str:
-        """Return database URL used by persistence layer."""
-
-    @abstractmethod
-    def get_groq_api_key(self) -> Optional[str]:
-        """Return Groq API key, if configured."""
-
-    @abstractmethod
-    def get_groq_model(self) -> str:
-        """Return Groq model identifier."""
-
-    @abstractmethod
-    def get_llm_timeout(self) -> int:
-        """Return LLM client timeout in seconds. Default: 15"""
-
-    @abstractmethod
-    def get_telegram_bot_token(self) -> Optional[str]:
-        """Return Patient-facing Telegram bot token, if configured."""
-
+# ... (Diğer abstract metodlar aynı) ...
     @abstractmethod
     def get_dentist_telegram_token(self) -> Optional[str]:
         """Return Dentist Panel Telegram bot token, if configured."""
@@ -51,7 +32,6 @@ class DentBotConfig(ABC):
         """Return Ollama model identifier. Default: llama3.2"""
         return "llama3.2"
 
-    # HOTEL -> CLINIC Metod İsimleri Değiştirildi
     def get_clinic_display_name(self) -> str:
         """Human friendly clinic / tenant label for UI surfaces."""
         return "DentBot Dental Clinic"
@@ -88,10 +68,8 @@ class DentBotConfig(ABC):
         contact_lines = [line for item in [phone, email, address] if (line := item) is not None]
         contact = "\n".join(f"• {line}" for line in contact_lines) if contact_lines else "İletişim bilgisi bulunmamaktadır."
         
-        # Çalışma saatlerini prompt'a eklemek için formatlama
         hours_str = "\n".join(f"• {day}: {time}" for day, time in working_hours.items()) if working_hours else "Çalışma saatleri belirlenmedi."
 
-        # Yeni Diş Kliniği Promptu
         return f"""You are a professional dental clinic appointment assistant for {name}. Be friendly, helpful, and focused strictly on scheduling and managing appointments.
 
 CRITICAL LANGUAGE RULE:

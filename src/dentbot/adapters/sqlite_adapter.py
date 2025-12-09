@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Gerekli Hata Sınıfları
 from dentbot.exceptions import DatabaseError
 
 class SQLiteAppointmentAdapter:
@@ -18,7 +17,6 @@ class SQLiteAppointmentAdapter:
         else:
             self.db_path = db_url
             
-        # Klasör yolunun mevcut olduğundan emin ol
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
     def _conn(self) -> sqlite3.Connection:
@@ -39,7 +37,7 @@ class SQLiteAppointmentAdapter:
             with self._conn() as conn:
                 cur = conn.cursor()
                 
-                # 1. DENTIST Tablosu
+                # 1. DENTIST Tablosu (Aynı kaldı)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS dentists (
@@ -49,9 +47,9 @@ class SQLiteAppointmentAdapter:
                         phone TEXT,
                         email TEXT,
                         telegram_chat_id INTEGER,
-                        working_days TEXT NOT NULL, -- CSV formatında (örn: Mon,Tue,...)
-                        start_time TEXT NOT NULL,    -- HH:MM
-                        end_time TEXT NOT NULL,      -- HH:MM
+                        working_days TEXT NOT NULL, 
+                        start_time TEXT NOT NULL,    
+                        end_time TEXT NOT NULL,      
                         break_start TEXT,
                         break_end TEXT,
                         slot_duration INTEGER NOT NULL DEFAULT 30,
@@ -61,7 +59,7 @@ class SQLiteAppointmentAdapter:
                     """
                 )
 
-                # 2. TREATMENT Tablosu
+                # 2. TREATMENT Tablosu (Aynı kaldı)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS treatments (
@@ -77,7 +75,7 @@ class SQLiteAppointmentAdapter:
                     """
                 )
 
-                # 3. APPOINTMENT Tablosu
+                # 3. APPOINTMENT Tablosu (patient_chat_id eklendi)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS appointments (
@@ -86,12 +84,13 @@ class SQLiteAppointmentAdapter:
                         patient_name TEXT NOT NULL,
                         patient_phone TEXT NOT NULL,
                         patient_email TEXT NOT NULL,
-                        appointment_date TEXT NOT NULL, -- YYYY-MM-DD
-                        time_slot TEXT NOT NULL,        -- HH:MM
-                        treatment_type TEXT NOT NULL,   -- Randevu sırasında tedavi adı (string)
+                        appointment_date TEXT NOT NULL, 
+                        time_slot TEXT NOT NULL,        
+                        treatment_type TEXT NOT NULL,   
                         duration_minutes INTEGER NOT NULL,
                         notes TEXT,
-                        status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, cancelled, completed
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        patient_chat_id INTEGER, -- ⭐ YENİ ALAN EKLENDİ
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY(dentist_id) REFERENCES dentists(id),
                         UNIQUE(dentist_id, appointment_date, time_slot) ON CONFLICT FAIL
@@ -103,7 +102,7 @@ class SQLiteAppointmentAdapter:
             raise DatabaseError(f"Tablo başlatma hatası: {e}") from e
 
     # ------------------------------------
-    # Yardımcı Metodlar (CRUD sonrası tek satır döndürme)
+    # Yardımcı Metodlar (Aynı kaldı)
     # ------------------------------------
     def _get_by_id(self, table_name: str, id_value: int) -> Optional[Dict[str, Any]]:
         with self._conn() as conn:
@@ -124,7 +123,7 @@ class SQLiteAppointmentAdapter:
 
 
     # ------------------------------------
-    # Dentist CRUD
+    # Dentist CRUD (Aynı kaldı)
     # ------------------------------------
     def create_dentist(self, data: Dict[str, Any]) -> Dict[str, Any]:
         with self._conn() as conn:
@@ -167,7 +166,7 @@ class SQLiteAppointmentAdapter:
             return cur.rowcount > 0
 
     # ------------------------------------
-    # Treatment CRUD
+    # Treatment CRUD (Aynı kaldı)
     # ------------------------------------
     def create_treatment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         with self._conn() as conn:
@@ -215,7 +214,7 @@ class SQLiteAppointmentAdapter:
 
 
     # ------------------------------------
-    # Appointment CRUD
+    # Appointment CRUD (Aynı kaldı)
     # ------------------------------------
     def create_appointment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -230,7 +229,6 @@ class SQLiteAppointmentAdapter:
                 conn.commit()
                 return self._get_by_id('appointments', appointment_id) or {"id": appointment_id}
         except sqlite3.IntegrityError as e:
-            # UNIQUE kısıtlamasından kaynaklanan çakışma hatası
             if 'UNIQUE constraint failed' in str(e):
                 raise DatabaseError("Randevu çakışması: Aynı gün ve saatte bu doktor için zaten bir randevu mevcut.") from e
             raise DatabaseError(f"Randevu oluşturma hatası: {e}") from e
@@ -274,7 +272,6 @@ class SQLiteAppointmentAdapter:
                 conn.commit()
                 return self.get_appointment(appointment_id)
         except sqlite3.IntegrityError as e:
-            # UNIQUE kısıtlamasından kaynaklanan çakışma hatası
             if 'UNIQUE constraint failed' in str(e):
                 raise DatabaseError("Randevu çakışması: Güncelleme, başka bir randevuyla çakışıyor.") from e
             raise DatabaseError(f"Randevu güncelleme hatası: {e}") from e
@@ -288,11 +285,10 @@ class SQLiteAppointmentAdapter:
             return cur.rowcount > 0
 
     # ------------------------------------
-    # Slot & Approval İşlemleri
+    # Slot & Approval İşlemleri (Aynı kaldı)
     # ------------------------------------
     def get_booked_slots(self, date: str, dentist_id: int) -> List[str]:
         """Belirtilen gün ve doktor için ONAYLANMIŞ veya BEKLEYEN dolu slotları döndürür."""
-        # Not: Sadece 'approved' veya 'pending' durumundaki randevuları dolu kabul ediyoruz.
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute(

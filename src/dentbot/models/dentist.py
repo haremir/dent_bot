@@ -36,7 +36,6 @@ class Dentist:
     def to_dict(self) -> Dict[str, Any]:
         """Dataclass'ı veritabanı/JSON uyumlu bir sözlüğe çevirir."""
         data = self.__dict__.copy()
-        # Önemli: working_days listesini virgülle ayrılmış string yap (SQLite için)
         data['working_days'] = ",".join(self.working_days)
         return data
 
@@ -45,7 +44,6 @@ class Dentist:
         """Sözlükten dataclass örneği oluşturur."""
         data = data.copy()
         
-        # Önemli: working_days stringini listeye çevir
         working_days_str = data.pop('working_days', "")
         if isinstance(working_days_str, str) and working_days_str:
             data['working_days'] = [d.strip() for d in working_days_str.split(",")]
