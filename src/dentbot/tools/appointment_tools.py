@@ -3,9 +3,8 @@ from typing import Any, Dict, Optional
 import logging
 from datetime import datetime
 
-# Gerekli importlar
 from dentbot.tools import tool, get_adapter 
-from dentbot.services import ApprovalService, NotificationService # ApprovalService'e ihtiyacımız var
+from dentbot.services import ApprovalService, NotificationService 
 from dentbot.models import Appointment
 from dentbot.exceptions import AppointmentError, DatabaseError
 
@@ -19,29 +18,25 @@ def _get_approval_service() -> ApprovalService:
     global _approval_service
     if _approval_service is None:
         adapter = get_adapter() 
-        # NotificationService de gereklidir, ancak test ortamında dummy bir bot ile başlatılabilir
-        # Gerçek uygulamada Telegram bot instance'ı buraya iletilmelidir.
+        # NotificationService (Bot) global olarak main.py'de set edilecek. 
+        # Burada sadece adapter'ı kullanarak NotificationService'i mock'lamalıyız.
         
-        # Faz 7'deki main.py'de NotificationService başlatılacağı için, 
-        # burada sadece adapter'ı kullanarak NotificationService'i mock'lamalıyız.
-        # En temiz çözüm için NotificationService'in Bot almasını zorunlu tutmamak, 
-        # ancak şimdilik NotificationService'i kullanabilmek için Bot'u geçici olarak mock'luyoruz.
         try:
-             # Bu, Faz 6'daki bot'u başlatana kadar hata verecektir. 
-             # Şimdilik NotificationService'i elle yaratıp dummy bir bot verelim.
+            # Gerçek Bot objesini kullanmak yerine, sadece sync metodları olan bir mock yapısı kullanıyoruz.
+            # Gerçek Bot objesi, Telegram handler tarafından Thread'e enjekte edilecektir.
             from telegram import Bot
             dummy_bot = Bot(token="dummy_token")
             notification_service = NotificationService(telegram_bot=dummy_bot)
             _approval_service = ApprovalService(adapter=adapter, notification_service=notification_service)
         except Exception:
-            # Eğer telegram kütüphanesi kurulu değilse veya başka bir hata varsa
             logger.warning("Telegram Bot kütüphanesi bulunamadı. NotificationService, loglama moduyla başlatıldı.")
             
             class DummyNotificationService:
-                async def send_approval_request(self, *args, **kwargs): pass
-                async def send_appointment_confirmation(self, *args, **kwargs): pass
-                async def send_approval_notification(self, *args, **kwargs): pass
-                async def send_rejection_notification(self, *args, **kwargs): pass
+                def send_approval_request(self, *args, **kwargs): pass
+                def send_appointment_confirmation(self, *args, **kwargs): pass
+                def send_approval_notification(self, *args, **kwargs): pass
+                def send_rejection_notification(self, *args, **kwargs): pass
+                def send_cancellation(self, *args, **kwargs): pass
                 
             _approval_service = ApprovalService(adapter=adapter, notification_service=DummyNotificationService())
             
@@ -52,7 +47,6 @@ def _get_approval_service() -> ApprovalService:
 # ------------------------------------
 
 def _validate_date_format(date_str: str) -> bool:
-    """Tarih formatını kontrol eder (YYYY-MM-DD)."""
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
         return True
@@ -60,30 +54,22 @@ def _validate_date_format(date_str: str) -> bool:
         return False
 
 def _validate_phone(phone: str) -> bool:
-    """Telefon numarasını kontrol eder (en az 10 hane)."""
     digits = [c for c in phone if c.isdigit()]
     return len(digits) >= 10
 
 def _validate_email(email: str) -> bool:
-    """E-posta adresini kontrol eder (@ ve . içeriyor mu)."""
     return "@" in email and "." in email
 
 def _extract_appointment_id(appointment_id: Any) -> int:
-    """
-    Randevu ID'sinden tam sayı ID'yi çıkarır.
-    'APT-XXXXXX' formatındaki stringleri ve integer ID'leri yönetir.
-    """
     if isinstance(appointment_id, int):
         return appointment_id
     
     if isinstance(appointment_id, str):
-        # APT-000005 formatını yönet
         if appointment_id.upper().startswith("APT-"):
             try:
                 return int(appointment_id.split("-")[1])
             except (IndexError, ValueError):
                 raise ValueError(f"Geçersiz randevu ID formatı: {appointment_id}")
-        # Doğrudan dönüştürme dene
         try:
             return int(appointment_id)
         except ValueError:
@@ -96,7 +82,7 @@ def _extract_appointment_id(appointment_id: Any) -> int:
 # ------------------------------------
 
 @tool
-async def create_appointment_request(
+def create_appointment_request( # ⭐ SYNC
     dentist_id: int, 
     patient_name: str, 
     patient_phone: str, 
@@ -106,14 +92,12 @@ async def create_appointment_request(
     treatment_type: str,
     duration_minutes: int,
     notes: Optional[str] = None,
-    # LLM'den gelmeyecek, ancak servise gerekli olan chat_id'yi burada sabit varsayalım
-    # Gerçekte LLM bu bilgiyi alamaz, bu yüzden bu bilgi Telegram handler'dan gelmelidir.
-    # Şimdilik bu tool'un sadece LLM'e sunulacağını varsayarak zorunlu parametre olarak eklemiyoruz.
-    # Bu tool'u çağıran Telegram handler, kendi chat ID'sini ekleyecektir.
+    # ⭐ KRİTİK: Bu alan, Telegram handler tarafından LLM'in görmediği bir argüman olarak eklenecek.
+    patient_chat_id: Optional[int] = None, 
 ) -> str:
     """
     Yeni bir randevu talebi oluşturur, doktor onayına sunar ve hastaya bildirim gönderir.
-    LLM, bu tool'u tüm zorunlu alanları (dentist_id, patient_name, phone, email, date, time_slot, treatment_type, duration_minutes) 
+    LLM, tüm zorunlu alanları (dentist_id, patient_name, phone, email, date, time_slot, treatment_type, duration_minutes) 
     müşteriden aldıktan sonra çağırır.
     
     Args:
@@ -126,11 +110,17 @@ async def create_appointment_request(
         treatment_type: Alınacak tedavinin adı (örneğin: "Dolgu").
         duration_minutes: Tedavinin tahmini süresi (dakika).
         notes: Ek notlar (opsiyonel).
+        patient_chat_id: Bildirimler için hastanın Telegram Chat ID'si (LLM bu alanı doldurmaz).
         
     Returns:
         Randevu talebinin durumunu belirten formatlanmış bir mesaj.
     """
-    # 1. Validasyonlar
+    
+    if not patient_chat_id:
+        # Bu hata mesajı LLM'e gitmemeli, Telegram handler'ı uyarmalıdır.
+        logger.error("create_appointment_request çağrılırken patient_chat_id eksik!")
+        return "❌ Randevu oluşturma hatası: İletişim bilgisi eksik (Sistem Hatası: Lütfen Yöneticinize Başvurun)."
+
     if not _validate_phone(patient_phone):
         return "❌ Hata: Geçersiz telefon numarası. Lütfen en az 10 haneli bir numara giriniz."
     if not _validate_email(patient_email):
@@ -138,7 +128,6 @@ async def create_appointment_request(
     if not _validate_date_format(appointment_date):
         return "❌ Hata: Geçersiz tarih formatı. Lütfen YYYY-MM-DD şeklinde giriniz."
     
-    # 2. Veri Yapısını Hazırla (patient_chat_id'yi Telegram handler'ın eklemesi beklenir)
     appointment_data = {
         "dentist_id": dentist_id,
         "patient_name": patient_name,
@@ -149,24 +138,14 @@ async def create_appointment_request(
         "treatment_type": treatment_type,
         "duration_minutes": duration_minutes,
         "notes": notes,
-        # Geçici Çözüm: Patient Chat ID'nin bir şekilde elde edildiğini varsayıyoruz. 
-        # LLM'e sunulduğu için bu tool'a hastanın chat ID'si parametre olarak verilmez.
-        # Bu tool, Telegram handler tarafından çağrılırken chat_id'yi ekleyecektir.
-        # Şimdilik ApprovalService'in içindeki dummy chat ID'ye güveniyoruz.
+        "patient_chat_id": patient_chat_id, # ⭐ Chat ID eklendi
     }
 
-    # 3. Approval Service'i çağır
     approval_service = _get_approval_service()
     
     try:
-        # **ÖNEMLİ:** Burası aslında Telegram Handler içinde yapılmalı, çünkü patient_chat_id'ye ihtiyaç var.
-        # Tool'un kendisi bu bilgiyi LLM'den alamaz. Bu tool'un sadece LLM'e ne zaman çağrılması gerektiğini 
-        # gösterdiğini varsayarak, patient_chat_id'yi servisten atlıyoruz. 
-        
-        # Ancak, roadmap'deki Adım 17'ye uyum için, servisi dummy bir chat_id ile çağırıyoruz.
-        new_appointment = await approval_service.create_pending_appointment(
+        new_appointment = approval_service.create_pending_appointment(
             appointment_data=appointment_data,
-            patient_chat_id=123456789 # Placeholder: Gerçek chat ID handler tarafından sağlanacak
         )
         ref_code = Appointment.from_dict(new_appointment).get_reference_code()
         
@@ -185,13 +164,6 @@ async def create_appointment_request(
 def get_appointment_details(appointment_id: Any) -> str:
     """
     Randevu ID'si (örneğin: 123 veya APT-000123) kullanarak randevu detaylarını getirir.
-    Bu aracı, kullanıcı randevusunun durumunu veya detaylarını sorduğunda kullanın.
-    
-    Args:
-        appointment_id: Randevu ID'si (integer veya APT-XXXXXX formatında string).
-        
-    Returns:
-        Randevu detaylarını içeren formatlanmış bir string veya hata mesajı.
     """
     adapter = get_adapter()
     
@@ -223,13 +195,6 @@ def get_appointment_details(appointment_id: Any) -> str:
 def cancel_appointment(appointment_id: Any) -> str:
     """
     Randevu ID'si kullanarak mevcut bir randevuyu iptal eder.
-    Bu aracı, kullanıcı randevusunu iptal etmek istediğinde kullanın.
-    
-    Args:
-        appointment_id: Randevu ID'si (integer veya APT-XXXXXX formatında string).
-        
-    Returns:
-        İptal durumunu belirten formatlanmış bir mesaj.
     """
     adapter = get_adapter()
     
@@ -238,20 +203,20 @@ def cancel_appointment(appointment_id: Any) -> str:
     except ValueError as e:
         return f"❌ Hata: {str(e)}"
         
-    # İptal etmeden önce randevuyu al (bildirim için)
     appointment_data = adapter.get_appointment(app_id)
     if not appointment_data:
         return f"❌ Hata: ID {app_id} ile randevu bulunamadı."
         
-    # Randevuyu veritabanından sil
     success = adapter.delete_appointment(app_id)
     
     if success:
-        # Hastaya iptal bildirimi gönder (burada da dummy chat ID varsayıyoruz)
-        dummy_patient_chat_id = 123456789 
-        _get_approval_service().notification_service.send_cancellation(
-             appointment_data, dummy_patient_chat_id # Gerçek chat ID'ye gerek var
-        )
+        # Hastaya iptal bildirimi gönder (DB'deki chat_id kullanılır)
+        patient_chat_id = appointment_data.get('patient_chat_id')
+        if patient_chat_id:
+             _get_approval_service().notification_service.send_cancellation(
+                 appointment_data, patient_chat_id
+             )
+        
         return f"✅ Randevu **{Appointment.from_dict(appointment_data).get_reference_code()}** başarıyla iptal edilmiştir."
     else:
         return f"❌ Hata: Randevu {app_id} iptal edilemedi."
@@ -264,14 +229,6 @@ def reschedule_appointment(
 ) -> str:
     """
     Mevcut bir randevuyu yeni tarih ve/veya saat ile günceller.
-    
-    Args:
-        appointment_id: Randevu ID'si (integer veya APT-XXXXXX formatında string).
-        new_date: Yeni randevu tarihi (opsiyonel, YYYY-MM-DD).
-        new_time: Yeni randevu saati (opsiyonel, HH:MM).
-        
-    Returns:
-        Güncel randevu detaylarını içeren formatlanmış bir mesaj veya hata mesajı.
     """
     adapter = get_adapter()
     
@@ -283,18 +240,15 @@ def reschedule_appointment(
     if not new_date and not new_time:
         return "❌ Hata: Yeniden planlama için yeni tarih veya yeni saat belirtmelisiniz."
         
-    # Tarih formatı kontrolü
     if new_date and not _validate_date_format(new_date):
         return "❌ Hata: Geçersiz yeni tarih formatı. Lütfen YYYY-MM-DD şeklinde giriniz."
     
-    # Güncelleme verilerini hazırla
     update_data: Dict[str, Any] = {}
     if new_date:
         update_data["appointment_date"] = new_date
     if new_time:
         update_data["time_slot"] = new_time
         
-    # Randevuyu güncelle
     try:
         updated = adapter.update_appointment(app_id, update_data)
         if not updated:

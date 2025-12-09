@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 from typing import Dict, Any, Optional
 
-# Telegram'ın temel nesnelerini (Bot, Inline Keyboard) varsayıyoruz.
-# Kullanıcının python-telegram-bot'u kurduğunu varsayarak import ediyoruz.
-# Eğer bu kütüphane kurulu değilse, bu dosya test edilmeden hata verebilir.
+# Telegram'ın temel nesnelerini varsayıyoruz (Şu an sync çalışması için await/async kaldırıldı)
 try:
     from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
-    from telegram.ext import Application
+    # Placeholder: Bot'un tipini belirlemek için
 except ImportError:
-    # Eğer kütüphane yoksa, sadece tür ipucu olarak Any kullan
     Bot = Any
     InlineKeyboardMarkup = Any
     InlineKeyboardButton = Any
@@ -23,20 +19,14 @@ logger = logging.getLogger(__name__)
 class NotificationService:
     """
     Randevu ile ilgili bildirimleri (hasta ve doktor) yöneten servis.
-    Telegram Bot instance'ı üzerinden mesaj gönderme işlemini gerçekleştirir.
+    Senkron (Sync) çalışacak şekilde düzenlendi.
     """
     
     def __init__(self, telegram_bot: Bot):
-        """
-        Args:
-            telegram_bot: python-telegram-bot kütüphanesinden gelen Bot instance'ı.
-        """
-        # Bot'un send_message metodunu asenkron olarak çağıracağız.
         self.bot = telegram_bot
 
     def _format_appointment_details(self, appointment_data: Dict[str, Any]) -> str:
         """Randevu detaylarını okunabilir formatta stringe çevirir."""
-        # Not: ID henüz atanmamışsa ref kodu geçici olacaktır, önemli değil.
         ref_code = f"APT-{appointment_data.get('id', 0):06d}"
         
         return (
@@ -49,42 +39,40 @@ class NotificationService:
             f"**Durum:** {appointment_data.get('status', 'pending').upper()}"
         )
 
-    async def send_to_patient(self, chat_id: int, message: str) -> bool:
-        """Hastaya bildirim gönderir (Şimdilik loglama + gerçek gönderim denemesi)."""
+    def send_to_patient(self, chat_id: int, message: str) -> bool: # ⭐ SYNC
+        """Hastaya bildirim gönderir (Bot'un sync versiyonu veya loglama)."""
         logger.info(f"PATIENT NOTIFICATION (Chat ID: {chat_id}): {message}")
         try:
-            # Gerçek gönderim
-            await self.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+            # Bot'un sync metodunu çağırıyoruz. telegram.ext bunu thread-safe olarak halleder.
+            self.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown') 
             return True
         except Exception as e:
             logger.error(f"Hastaya mesaj gönderilirken hata: {e}")
             return False
 
-    async def send_to_dentist(self, chat_id: int, message: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> bool:
+    def send_to_dentist(self, chat_id: int, message: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> bool: # ⭐ SYNC
         """Doktora bildirim gönderir (telegram_chat_id'ye)."""
         logger.info(f"DENTIST NOTIFICATION (Chat ID: {chat_id}): {message}")
         try:
-            # Gerçek gönderim
-            await self.bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup, parse_mode='Markdown')
+            self.bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup, parse_mode='Markdown')
             return True
         except Exception as e:
             logger.error(f"Doktora mesaj gönderilirken hata: {e}")
             return False
 
-    async def send_appointment_confirmation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
+    def send_appointment_confirmation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
         """Hastaya 'Randevu talebiniz oluşturuldu, doktor onayı bekleniyor' mesajı gönderir."""
         ref_code = f"APT-{appointment_data.get('id', '...')}"
         message = (
             f"✅ **Randevu Talebi Oluşturuldu!**\n\n"
             f"Randevu Kodunuz: **{ref_code}**\n"
             f"Durum: **DOKTOR ONAYI BEKLENİYOR**\n\n"
-            f"Detaylar:\n"
-            f"{self._format_appointment_details(appointment_data)}\n\n"
-            f"Doktorumuz talebinizi en kısa sürede değerlendirecektir. Onaylandığında size hemen bilgi vereceğiz."
+            f"Detaylar:\n{self._format_appointment_details(appointment_data)}\n\n"
+            f"Doktorumuz talebinizi en kısa sürede değerlendirecektir."
         )
-        await self.send_to_patient(patient_chat_id, message)
+        self.send_to_patient(patient_chat_id, message)
 
-    async def send_approval_request(self, appointment_data: Dict[str, Any], dentist_chat_id: int) -> None:
+    def send_approval_request(self, appointment_data: Dict[str, Any], dentist_chat_id: int) -> None: # ⭐ SYNC
         """Doktora 'Yeni randevu talebi var, onaylar mısınız?' mesajı gönderir (Inline Keyboard ile)."""
         ref_code = f"APT-{appointment_data.get('id', '...')}"
         app_id = appointment_data['id']
@@ -93,12 +81,10 @@ class NotificationService:
             f"🔔 **YENİ RANDEVU TALEBİ**\n\n"
             f"Randevu Kodu: **{ref_code}**\n"
             f"Durum: PENDING\n\n"
-            f"Detaylar:\n"
-            f"{self._format_appointment_details(appointment_data)}\n\n"
+            f"Detaylar:\n{self._format_appointment_details(appointment_data)}\n\n"
             f"Lütfen onaylayın veya reddedin."
         )
         
-        # Inline Keyboard Oluşturma (Callback formatı: ACTION_APPOINTMENTID)
         if InlineKeyboardMarkup is not Any:
             keyboard = [
                 [
@@ -108,45 +94,42 @@ class NotificationService:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
         else:
-            # Eğer telegram import edilemediyse, Markup göndermeyecek
             reply_markup = None
             
-        await self.send_to_dentist(dentist_chat_id, message, reply_markup)
+        self.send_to_dentist(dentist_chat_id, message, reply_markup)
 
-    async def send_approval_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
+    def send_approval_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
         """Hastaya 'Randevunuz onaylandı' mesajı gönderir."""
         message = (
             f"🎉 **Randevunuz ONAYLANDI!**\n\n"
             f"Randevu Kodunuz: **APT-{appointment_data.get('id', 0):06d}**\n"
             f"Doktorumuz randevunuzu onayladı. Sizi bekliyor olacağız.\n\n"
-            f"Detaylar:\n"
-            f"{self._format_appointment_details(appointment_data)}\n\n"
+            f"Detaylar:\n{self._format_appointment_details(appointment_data)}\n\n"
             f"Herhangi bir değişiklik veya iptal için bize yazabilirsiniz."
         )
-        await self.send_to_patient(patient_chat_id, message)
+        self.send_to_patient(patient_chat_id, message)
 
-    async def send_rejection_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
+    def send_rejection_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
         """Hastaya 'Randevunuz onaylanamadı' mesajı gönderir."""
         message = (
             f"❌ **Randevu Talebiniz Reddedildi**\n\n"
             f"Randevu Kodu: **APT-{appointment_data.get('id', 0):06d}**\n"
-            f"Üzgünüz, {appointment_data.get('appointment_date', 'belirtilen tarihteki')} randevu talebiniz doktorumuz tarafından onaylanamamıştır.\n\n"
-            f"Detaylar:\n"
-            f"{self._format_appointment_details(appointment_data)}\n\n"
+            f"Üzgünüz, randevu talebiniz doktorumuz tarafından onaylanamamıştır.\n\n"
+            f"Detaylar:\n{self._format_appointment_details(appointment_data)}\n\n"
             f"Lütfen alternatif bir gün veya saat belirterek tekrar deneyin."
         )
-        await self.send_to_patient(patient_chat_id, message)
+        self.send_to_patient(patient_chat_id, message)
 
-    async def send_reminder(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
-        """Hastaya randevu hatırlatması gönderir (Cron job ile çağrılacak)."""
+    def send_reminder(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
+        """Hastaya randevu hatırlatması gönderir."""
         message = (
             f"⏰ **RANDEVU HATIRLATMASI**\n\n"
             f"Yarın, **{appointment_data.get('time_slot', 'N/A')}**'da **{appointment_data.get('treatment_type', 'randevu')}** için randevunuz bulunmaktadır.\n"
             f"Lütfen randevunuza zamanında gelmeye özen gösterin."
         )
-        await self.send_to_patient(patient_chat_id, message)
+        self.send_to_patient(patient_chat_id, message)
 
-    async def send_cancellation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
+    def send_cancellation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
         """Hastaya randevu iptal bilgisini gönderir."""
         message = (
             f"🗑️ **Randevu İptal Edildi**\n\n"
@@ -154,4 +137,4 @@ class NotificationService:
             f"Tedavi: {appointment_data.get('treatment_type', 'N/A')}\n"
             f"Tarih: {appointment_data.get('appointment_date', 'N/A')}\n"
         )
-        await self.send_to_patient(patient_chat_id, message)
+        self.send_to_patient(patient_chat_id, message)
