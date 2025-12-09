@@ -21,17 +21,24 @@ from telegram.ext import (
     filters,
 )
 
-from dent_bot.config import get_config
-from dent_bot.prompts import get_system_prompt
-from dent_bot.tools import (
-    cancel_reservation,
-    check_availability,
-    create_reservation,
+# ⭐ Importlar dentbot yapısına ve yeni tool'lara göre güncellendi
+from dentbot.config import get_config
+from dentbot.prompts import get_system_prompt
+from dentbot.tools import (
     get_adapter,
-    get_reservation,
-    get_room_prices,
-    update_reservation,
+    list_dentists,
+    get_dentist_schedule,
+    get_dentist_specialties,
+    get_treatment_list, 
+    get_treatment_duration,
+    check_available_slots, 
+    check_availability_by_treatment,
+    create_appointment_request, 
+    get_appointment_details, 
+    cancel_appointment, 
+    reschedule_appointment,
 )
+from dentbot.services import NotificationService # Bildirimler için
 
 logger = logging.getLogger(__name__)
 
@@ -40,39 +47,77 @@ TOOL_LOOP_TIMEOUT = 45  # seconds for tool execution
 LLM_CALL_TIMEOUT = 30   # seconds for single LLM call
 
 
-def create_langchain_tools() -> List[StructuredTool]:
-    """Create LangChain StructuredTool objects from our tool functions."""
+# Global NotificationService instance for use in tool invocation
+_notification_service: Optional[NotificationService] = None
 
+def get_notification_service(bot: Any) -> NotificationService:
+    """NotificationService instance'ını döndürür."""
+    global _notification_service
+    if _notification_service is None:
+        _notification_service = NotificationService(telegram_bot=bot)
+    return _notification_service
+
+
+def create_langchain_tools() -> List[StructuredTool]:
+    """Create LangChain StructuredTool objects from our new tool functions."""
+
+    # ⭐ Yeni Tool'lar güncellendi
     tools = [
         StructuredTool.from_function(
-            func=get_room_prices,
-            name="get_room_prices",
-            description="Get prices for all available rooms. Use this when user asks about room prices or wants to see available rooms.",
+            func=list_dentists,
+            name="list_dentists",
+            description="Klinikteki tüm aktif diş hekimlerini uzmanlık alanları ve ID'leriyle listeler. Kullanıcı doktorları sorduğunda kullanılır.",
         ),
         StructuredTool.from_function(
-            func=check_availability,
-            name="check_availability",
-            description="Check room availability for specific dates and number of guests.",
+            func=get_dentist_specialties,
+            name="get_dentist_specialties",
+            description="Klinikteki tüm diş hekimlerinin uzmanlık alanlarını gruplanmış şekilde listeler.",
         ),
         StructuredTool.from_function(
-            func=create_reservation,
-            name="create_reservation",
-            description="Create a new reservation. Always ensure you have room_id, guest name, dates, and guest count before calling.",
+            func=get_dentist_schedule,
+            name="get_dentist_schedule",
+            description="Belirli bir diş hekiminin o günkü çalışma saatlerini ve boş randevu slotlarını gösterir. Doktor ID ve tarih (YYYY-MM-DD) zorunludur.",
         ),
         StructuredTool.from_function(
-            func=update_reservation,
-            name="update_reservation",
-            description="Update an existing reservation. Only call when user provides reservation ID and fields to update.",
+            func=get_treatment_list,
+            name="get_treatment_list",
+            description="Klinikte sunulan tüm aktif tedavi hizmetlerini süreleri ve fiyat bilgileriyle (varsa) listeler. Tedavileri veya fiyat/süre bilgisini öğrenmek için kullanılır.",
         ),
         StructuredTool.from_function(
-            func=get_reservation,
-            name="get_reservation",
-            description="Get reservation details by reservation_id. Only call when user provides a reservation ID.",
+            func=get_treatment_duration,
+            name="get_treatment_duration",
+            description="Belirli bir tedavi adının tahmini süresini dakika cinsinden döndürür. Randevu oluşturmadan önce süre bilgisi alınmak için kullanılır. Tedavi adı zorunludur.",
         ),
         StructuredTool.from_function(
-            func=cancel_reservation,
-            name="cancel_reservation",
-            description="Cancel an existing reservation by reservation_id. Only call when user provides a reservation ID.",
+            func=check_available_slots,
+            name="check_available_slots",
+            description="Belirli bir hekim (dentist_id) ve tarih (YYYY-MM-DD) için müsait olduğu tüm slotları listeler.",
+        ),
+        StructuredTool.from_function(
+            func=check_availability_by_treatment,
+            name="check_availability_by_treatment",
+            description="Belirli bir tedavi (treatment_name) için uygun olan doktorları ve boş slot sayılarını listeler.",
+        ),
+        StructuredTool.from_function(
+            # ⭐ Fonksiyona patient_chat_id argümanı eklediğimizi unutmayın.
+            func=create_appointment_request,
+            name="create_appointment_request",
+            description="Yeni bir randevu talebi oluşturur, doktor onayına sunar. Doktor ID, Hasta Adı, Telefon, E-posta, Tarih, Saat, Tedavi Adı ve Süresi zorunludur.",
+        ),
+        StructuredTool.from_function(
+            func=get_appointment_details,
+            name="get_appointment_details",
+            description="Randevu ID'si (örneğin: APT-000123) kullanarak randevu detaylarını getirir.",
+        ),
+        StructuredTool.from_function(
+            func=cancel_appointment,
+            name="cancel_appointment",
+            description="Mevcut bir randevuyu ID'si ile iptal eder. Randevu ID'si zorunludur.",
+        ),
+        StructuredTool.from_function(
+            func=reschedule_appointment,
+            name="reschedule_appointment",
+            description="Mevcut bir randevunun tarih ve/veya saatini ID ile günceller.",
         ),
     ]
 
@@ -112,8 +157,8 @@ def get_llm() -> ChatGroq:
             model=model_name,
             groq_api_key=api_key,
             temperature=0.4,
-            timeout=LLM_CALL_TIMEOUT,  # ⭐ Timeout ekledik
-            max_retries=2,  # ⭐ Retry ekledik
+            timeout=LLM_CALL_TIMEOUT, 
+            max_retries=2, 
         )
     return _llm
 
@@ -135,10 +180,15 @@ def _trim_history(messages: List[Any], limit: int = 12) -> List[Any]:
     return system_messages[:1] + trimmed
 
 
-def _run_tool_loop(user_message: str, history: List[Any]) -> tuple[str, List[Any]]:
+def _run_tool_loop(user_message: str, chat_id: int, history: List[Any]) -> tuple[str, List[Any]]:
     """
     Blocking helper that runs the tool-calling loop.
     
+    Args:
+        user_message: Kullanıcı mesajı
+        chat_id: Kullanıcının Telegram chat ID'si (NotificationService için kritik)
+        history: Mesaj geçmişi
+
     Returns:
         Tuple of (response_text, updated_messages)
     
@@ -198,6 +248,14 @@ def _run_tool_loop(user_message: str, history: List[Any]) -> tuple[str, List[Any
                         )
                     )
                     continue
+                
+                # ⭐ CRITICAL: Inject chat_id to the appointment creation request
+                # This enables the NotificationService (within ApprovalService) to know 
+                # where to send the confirmation message.
+                if tool_name == "create_appointment_request":
+                    # Adım 22'de, bu tool'un patient_chat_id almasını kararlaştırdık.
+                    args["patient_chat_id"] = chat_id
+                    logger.info(f"Injected patient_chat_id: {chat_id} to {tool_name}")
 
                 try:
                     result = tool.invoke(args)
@@ -218,16 +276,12 @@ def _run_tool_loop(user_message: str, history: List[Any]) -> tuple[str, List[Any
             
         except Exception as e:
             logger.error(f"Error in tool loop iteration {iteration}: {e}", exc_info=True)
-            # Rate limit hatası kontrolü
             if "rate_limit" in str(e).lower() or "429" in str(e):
                 raise Exception("API rate limit aşıldı. Lütfen birkaç saniye bekleyip tekrar deneyin.")
-            # Timeout hatası
             if "timeout" in str(e).lower():
                 raise TimeoutError("İstek zaman aşımına uğradı. Lütfen tekrar deneyin.")
-            # Diğer hatalar
             raise
 
-    # If we've exhausted max_iterations, return fallback
     logger.warning("Tool loop exhausted max iterations")
     fallback = (
         "İşlem tamamlanamadı. Lütfen isteğinizi daha net bir şekilde tekrarlar mısınız?"
@@ -236,17 +290,10 @@ def _run_tool_loop(user_message: str, history: List[Any]) -> tuple[str, List[Any
 
 
 async def handle_message_with_agent(
-    user_message: str, context: ContextTypes.DEFAULT_TYPE
+    user_message: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE
 ) -> str:
     """
     Async wrapper around the blocking tool loop with timeout.
-    
-    Returns:
-        Response text
-        
-    Raises:
-        TimeoutError: If processing takes too long
-        Exception: For other errors
     """
     history = _prepare_history(context)
     history_snapshot = list(history)
@@ -254,11 +301,11 @@ async def handle_message_with_agent(
     loop = asyncio.get_running_loop()
     
     try:
-        # ⭐ Timeout ile çalıştır
+        # ⭐ chat_id _run_tool_loop'a iletiliyor
         response, updated_messages = await asyncio.wait_for(
             loop.run_in_executor(
                 None, 
-                partial(_run_tool_loop, user_message, history_snapshot)
+                partial(_run_tool_loop, user_message, chat_id, history_snapshot)
             ),
             timeout=TOOL_LOOP_TIMEOUT
         )
@@ -277,21 +324,20 @@ async def handle_message_with_agent(
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     try:
-        hotel_name = context.bot_data.get("hotel_name") or get_config().get_hotel_display_name()
+        # ⭐ get_hotel_display_name -> get_clinic_display_name
+        clinic_name = context.bot_data.get("clinic_name") or get_config().get_clinic_display_name()
         welcome_message = (
-            f"🏨 Hoş geldiniz! {hotel_name}'e rezervasyon asistanıyım.\n\n"
+            f"🦷 Hoş geldiniz! Ben **{clinic_name}** randevu asistanıyım.\n\n"
             f"Size nasıl yardımcı olabilirim?\n\n"
             f"Yapabileceğim işlemler:\n"
-            f"• Oda fiyatlarını gösterme\n"
-            f"• Müsaitlik kontrolü\n"
-            f"• Rezervasyon oluşturma\n"
-            f"• Rezervasyon güncelleme\n"
-            f"• Rezervasyon sorgulama\n"
-            f"• Rezervasyon iptali\n\n"
-            f"Örnek: 'Oda fiyatlarınızı görebilir miyim?' veya "
-            f"'25 Aralık için müsait odanız var mı?'"
+            f"• Sunulan **Tedavileri** ve sürelerini gösterme\n"
+            f"• Doktor **Müsaitlik** kontrolü ve randevu slotlarını gösterme\n"
+            f"• Yeni **Randevu** talebi oluşturma (doktor onayına sunulur)\n"
+            f"• Randevu sorgulama, güncelleme veya iptali\n\n"
+            f"Örnek: 'Diş temizliği ne kadar sürer?' veya "
+            f"'Yarın için Dr. Ahmet'te boş saat var mı?'"
         )
-        await update.message.reply_text(welcome_message)
+        await update.message.reply_text(welcome_message, parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Error in start_command: {e}", exc_info=True)
         await update.message.reply_text(
@@ -302,29 +348,33 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle regular text messages with comprehensive error handling."""
     user_message = update.message.text
+    chat_id = update.effective_chat.id # ⭐ Chat ID'yi alıyoruz
     
+    # NotificationService'i tek bir kez init et (Bot instance'ı lazım)
+    if _notification_service is None:
+        global _notification_service
+        _notification_service = get_notification_service(context.bot)
+
     try:
-        # Show typing indicator
         await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             action="typing"
         )
         
-        logger.info(f"Processing message from user {update.effective_user.id}: {user_message[:50]}...")
+        logger.info(f"Processing message from user {update.effective_user.id} (Chat ID: {chat_id}): {user_message[:50]}...")
         
-        # Process message with agent
-        response = await handle_message_with_agent(user_message, context)
+        # ⭐ chat_id'yi handle_message_with_agent'a iletiyoruz
+        response = await handle_message_with_agent(user_message, chat_id, context)
         
-        # Kaçış karakterlerini temizle ve formatla
         response = response.replace("\\n", "\n")
         
         # Maksimum 4096 karaktere böl (Telegram limiti)
         if len(response) > 4096:
             chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
             for chunk in chunks:
-                await update.message.reply_text(chunk)
+                await update.message.reply_text(chunk, parse_mode='Markdown')
         else:
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode='Markdown')
             
         logger.info("Message processed successfully")
         
@@ -332,10 +382,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Timeout error: {e}")
         error_message = (
             "⏱️ İşlem çok uzun sürdü.\n\n"
-            "Lütfen:\n"
-            "• Daha basit bir soru sorun\n"
-            "• Birkaç saniye bekleyip tekrar deneyin\n\n"
-            "Sorun devam ederse /start ile yeniden başlayın."
+            "Lütfen daha basit bir istek ile tekrar deneyin."
         )
         await update.message.reply_text(error_message)
         
@@ -343,28 +390,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         error_str = str(e).lower()
         logger.error(f"Error in message_handler: {e}", exc_info=True)
         
-        # Spesifik hata mesajları
         if "rate_limit" in error_str or "429" in error_str:
-            error_message = (
-                "⚠️ API limit aşıldı.\n\n"
-                "Lütfen 10-15 saniye bekleyip tekrar deneyin."
-            )
+            error_message = ("⚠️ API limit aşıldı. Lütfen 10-15 saniye bekleyip tekrar deneyin.")
         elif "timeout" in error_str:
-            error_message = (
-                "⏱️ Bağlantı zaman aşımına uğradı.\n\n"
-                "Lütfen tekrar deneyin."
-            )
+            error_message = ("⏱️ Bağlantı zaman aşımına uğradı. Lütfen tekrar deneyin.")
         elif "api key" in error_str or "unauthorized" in error_str:
-            error_message = (
-                "🔑 API anahtarı hatası.\n\n"
-                "Lütfen yönetici ile iletişime geçin."
-            )
+            error_message = ("🔑 API anahtarı hatası. Lütfen yönetici ile iletişime geçin.")
         else:
             error_message = (
                 "❌ Beklenmeyen bir hata oluştu.\n\n"
-                "Lütfen:\n"
-                "• Mesajınızı tekrar gönderin\n"
-                "• Sorun devam ederse /start ile yeniden başlayın\n\n"
                 f"Hata kodu: {type(e).__name__}"
             )
         
@@ -381,46 +415,43 @@ def create_telegram_app() -> Application:
             "Please add it to your .env file."
         )
     
-    # Create application with timeout settings
     application = (
         Application.builder()
         .token(token)
-        .connect_timeout(30)  # ⭐ Connection timeout
-        .read_timeout(30)     # ⭐ Read timeout
-        .write_timeout(30)    # ⭐ Write timeout
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
         .build()
     )
     
-    # Add handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     )
     
-    # Store hotel name in bot data
-    application.bot_data["hotel_name"] = config.get_hotel_display_name()
+    # ⭐ Otel adını klinik adı olarak güncelle
+    application.bot_data["clinic_name"] = config.get_clinic_display_name()
     
     return application
 
 
 async def run_telegram_bot() -> None:
-    """Run the Telegram bot."""
+    """Run the Patient-facing Telegram bot."""
     application = create_telegram_app()
     
-    logger.info("Starting Telegram bot...")
+    logger.info("Starting Patient-facing Telegram bot...")
     await application.initialize()
     await application.start()
     await application.updater.start_polling(
-        drop_pending_updates=True  # ⭐ Eski mesajları atla
+        drop_pending_updates=True
     )
     
-    logger.info("Telegram bot is running. Press Ctrl+C to stop.")
+    logger.info("Patient-facing Telegram bot is running. Press Ctrl+C to stop.")
     
-    # Keep the bot running
     try:
         await asyncio.Event().wait()
     except KeyboardInterrupt:
-        logger.info("Stopping Telegram bot...")
+        logger.info("Stopping Patient-facing Telegram bot...")
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
