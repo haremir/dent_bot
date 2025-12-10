@@ -4,7 +4,6 @@ Telegram bot channel implementation with LangChain tool-calling workflow.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from functools import partial
 from typing import Any, Dict, List, Optional
@@ -49,6 +48,7 @@ LLM_CALL_TIMEOUT = 30   # seconds for single LLM call
 
 # Global NotificationService instance for use in tool invocation
 _notification_service: Optional[NotificationService] = None
+
 
 def get_notification_service(bot: Any) -> NotificationService:
     """NotificationService instance'ını döndürür."""
@@ -99,7 +99,6 @@ def create_langchain_tools() -> List[StructuredTool]:
             description="Belirli bir tedavi (treatment_name) için uygun olan doktorları ve boş slot sayılarını listeler.",
         ),
         StructuredTool.from_function(
-            # ⭐ Fonksiyona patient_chat_id argümanı eklediğimizi unutmayın.
             func=create_appointment_request,
             name="create_appointment_request",
             description="Yeni bir randevu talebi oluşturur, doktor onayına sunar. Doktor ID, Hasta Adı, Telefon, E-posta, Tarih, Saat, Tedavi Adı ve Süresi zorunludur.",
@@ -182,19 +181,7 @@ def _trim_history(messages: List[Any], limit: int = 12) -> List[Any]:
 
 def _run_tool_loop(user_message: str, chat_id: int, history: List[Any]) -> tuple[str, List[Any]]:
     """
-    Blocking helper that runs the tool-calling loop.
-    
-    Args:
-        user_message: Kullanıcı mesajı
-        chat_id: Kullanıcının Telegram chat ID'si (NotificationService için kritik)
-        history: Mesaj geçmişi
-
-    Returns:
-        Tuple of (response_text, updated_messages)
-    
-    Raises:
-        TimeoutError: If execution takes too long
-        Exception: For other errors
+    Blocking helper that runs the tool-calling loop. (SYNC)
     """
     llm = get_llm()
     tools = get_tools()
@@ -210,11 +197,9 @@ def _run_tool_loop(user_message: str, chat_id: int, history: List[Any]) -> tuple
         try:
             logger.info(f"Tool loop iteration {iteration + 1}/{max_iterations}")
             
-            # Call LLM
             ai_message: AIMessage = llm_with_tools.invoke(messages)
             messages.append(ai_message)
 
-            # Check if we have a final response (no tool calls)
             if not ai_message.tool_calls:
                 content = ai_message.content
                 if isinstance(content, list):
@@ -227,7 +212,6 @@ def _run_tool_loop(user_message: str, chat_id: int, history: List[Any]) -> tuple
                 logger.info("Got final response from LLM")
                 return response_text, messages
 
-            # Execute tool calls
             tool_messages: List[ToolMessage] = []
             for call in ai_message.tool_calls:
                 tool_name = call.get("name")
@@ -250,15 +234,13 @@ def _run_tool_loop(user_message: str, chat_id: int, history: List[Any]) -> tuple
                     continue
                 
                 # ⭐ CRITICAL: Inject chat_id to the appointment creation request
-                # This enables the NotificationService (within ApprovalService) to know 
-                # where to send the confirmation message.
                 if tool_name == "create_appointment_request":
-                    # Adım 22'de, bu tool'un patient_chat_id almasını kararlaştırdık.
                     args["patient_chat_id"] = chat_id
                     logger.info(f"Injected patient_chat_id: {chat_id} to {tool_name}")
 
                 try:
-                    result = tool.invoke(args)
+                    # Tool'lar SYNC olduğu için doğrudan invoke edilir
+                    result = tool.invoke(args) 
                     logger.info(f"Tool {tool_name} executed successfully")
                 except Exception as exc:
                     logger.error("Tool %s failed: %s", tool_name, exc, exc_info=True)
@@ -293,21 +275,18 @@ async def handle_message_with_agent(
     user_message: str, chat_id: int, context: ContextTypes.DEFAULT_TYPE
 ) -> str:
     """
-    Async wrapper around the blocking tool loop with timeout.
+    Async wrapper around the blocking tool loop using asyncio.to_thread.
     """
     history = _prepare_history(context)
     history_snapshot = list(history)
-
-    loop = asyncio.get_running_loop()
     
+    # ⭐ SYNC _run_tool_loop'u asyncio.to_thread ile ASYNC ortama taşı
     try:
-        # ⭐ chat_id _run_tool_loop'a iletiliyor
-        response, updated_messages = await asyncio.wait_for(
-            loop.run_in_executor(
-                None, 
-                partial(_run_tool_loop, user_message, chat_id, history_snapshot)
-            ),
-            timeout=TOOL_LOOP_TIMEOUT
+        response, updated_messages = await asyncio.to_thread(
+            _run_tool_loop, 
+            user_message, 
+            chat_id, 
+            history_snapshot
         )
         
         context.user_data["history"] = _trim_history(updated_messages)
@@ -324,7 +303,6 @@ async def handle_message_with_agent(
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     try:
-        # ⭐ get_hotel_display_name -> get_clinic_display_name
         clinic_name = context.bot_data.get("clinic_name") or get_config().get_clinic_display_name()
         welcome_message = (
             f"🦷 Hoş geldiniz! Ben **{clinic_name}** randevu asistanıyım.\n\n"
@@ -348,7 +326,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle regular text messages with comprehensive error handling."""
     user_message = update.message.text
-    chat_id = update.effective_chat.id # ⭐ Chat ID'yi alıyoruz
+    chat_id = update.effective_chat.id 
     
     # NotificationService'i tek bir kez init et (Bot instance'ı lazım)
     if _notification_service is None:
@@ -363,12 +341,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         logger.info(f"Processing message from user {update.effective_user.id} (Chat ID: {chat_id}): {user_message[:50]}...")
         
-        # ⭐ chat_id'yi handle_message_with_agent'a iletiyoruz
         response = await handle_message_with_agent(user_message, chat_id, context)
         
         response = response.replace("\\n", "\n")
         
-        # Maksimum 4096 karaktere böl (Telegram limiti)
         if len(response) > 4096:
             chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
             for chunk in chunks:
@@ -406,7 +382,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 def create_telegram_app() -> Application:
-    """Create and configure Telegram application."""
+    """Hasta botu Telegram uygulamasını oluşturur ve yapılandırır."""
     config = get_config()
     token = config.get_telegram_bot_token()
     if not token:
@@ -429,15 +405,15 @@ def create_telegram_app() -> Application:
         MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     )
     
-    # ⭐ Otel adını klinik adı olarak güncelle
     application.bot_data["clinic_name"] = config.get_clinic_display_name()
+    
+    # Adapter set etme işlemi main.py'de yapılacaktır.
     
     return application
 
 
-async def run_telegram_bot() -> None:
-    """Run the Patient-facing Telegram bot."""
-    application = create_telegram_app()
+async def run_telegram_bot(application: Application) -> None: # ⭐ DÜZELTME: Application parametre olarak alınır
+    """Hasta botunu çalıştırır."""
     
     logger.info("Starting Patient-facing Telegram bot...")
     await application.initialize()
@@ -450,19 +426,8 @@ async def run_telegram_bot() -> None:
     
     try:
         await asyncio.Event().wait()
-    except KeyboardInterrupt:
+    except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Stopping Patient-facing Telegram bot...")
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
-
-
-if __name__ == "__main__":
-    import asyncio
-    
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.INFO,
-    )
-    
-    asyncio.run(run_telegram_bot())

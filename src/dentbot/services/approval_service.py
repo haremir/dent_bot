@@ -17,9 +17,13 @@ class ApprovalService:
     Bu servis, botun ana randevu oluşturma giriş noktasıdır ve senkron çalışır.
     """
     
-    def __init__(self, adapter: AppointmentAdapter, notification_service: NotificationService):
+    def __init__(self, adapter: AppointmentAdapter, 
+                 patient_notification_service: NotificationService, # ⭐ Yeni Parametre
+                 dentist_notification_service: NotificationService # ⭐ Yeni Parametre
+                ):
         self.adapter = adapter
-        self.notification_service = notification_service
+        self.patient_notif = patient_notification_service # Hastaya bildirim
+        self.dentist_notif = dentist_notification_service # Doktora bildirim
 
     def _get_dentist_chat_id(self, dentist_id: int) -> int:
         """Doktorun Telegram Chat ID'sini çeker."""
@@ -30,10 +34,9 @@ class ApprovalService:
             return -1
         return chat_id
 
-    def create_pending_appointment(self, appointment_data: Dict[str, Any]) -> Dict[str, Any]: # ⭐ SYNC
+    def create_pending_appointment(self, appointment_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Yeni bir randevu oluşturur, durumunu 'pending' olarak ayarlar ve bildirimleri gönderir.
-        patient_chat_id, appointment_data içinde beklenir ve DB'ye kaydedilir.
         """
         appointment_data["status"] = Appointment.STATUS_PENDING
         
@@ -43,9 +46,9 @@ class ApprovalService:
             raise e
         
         # 3. Hastaya randevu talebinin oluşturulduğunu bildir
-        patient_chat_id = new_appointment_data.get('patient_chat_id') # ⭐ DB'den çektik
+        patient_chat_id = new_appointment_data.get('patient_chat_id')
         if patient_chat_id:
-            self.notification_service.send_appointment_confirmation( # ⭐ await KALDIRILDI
+            self.patient_notif.send_appointment_confirmation( 
                 new_appointment_data, 
                 patient_chat_id
             )
@@ -55,14 +58,14 @@ class ApprovalService:
         dentist_chat_id = self._get_dentist_chat_id(dentist_id)
         
         if dentist_chat_id != -1:
-            self.notification_service.send_approval_request( # ⭐ await KALDIRILDI
+            self.dentist_notif.send_approval_request( 
                 new_appointment_data, 
                 dentist_chat_id
             )
         
         return new_appointment_data
 
-    def approve_appointment(self, appointment_id: int) -> Dict[str, Any]: # ⭐ SYNC
+    def approve_appointment(self, appointment_id: int) -> Dict[str, Any]:
         """
         Randevuyu onaylar, durumunu 'approved' yapar ve hastaya bildirim gönderir.
         """
@@ -75,16 +78,16 @@ class ApprovalService:
             raise DatabaseError(f"Randevu {appointment_id} onaylanırken DB hatası.")
             
         # 3. Hastaya onay bildirimi gönder
-        patient_chat_id = approved_appointment.get('patient_chat_id') # ⭐ DB'den çektik
+        patient_chat_id = approved_appointment.get('patient_chat_id')
         if patient_chat_id:
-            self.notification_service.send_approval_notification( # ⭐ await KALDIRILDI
+            self.patient_notif.send_approval_notification( 
                 approved_appointment, 
                 patient_chat_id
             )
         
         return approved_appointment
 
-    def reject_appointment(self, appointment_id: int) -> Dict[str, Any]: # ⭐ SYNC
+    def reject_appointment(self, appointment_id: int) -> Dict[str, Any]:
         """
         Randevuyu reddeder, durumunu 'cancelled' yapar ve hastaya bildirim gönderir.
         """
@@ -97,9 +100,9 @@ class ApprovalService:
             raise DatabaseError(f"Randevu {appointment_id} reddedilirken DB hatası.")
 
         # Hastaya red bildirimi gönder
-        patient_chat_id = rejected_appointment.get('patient_chat_id') # ⭐ DB'den çektik
+        patient_chat_id = rejected_appointment.get('patient_chat_id')
         if patient_chat_id:
-            self.notification_service.send_rejection_notification( # ⭐ await KALDIRILDI
+            self.patient_notif.send_rejection_notification( 
                 rejected_appointment, 
                 patient_chat_id
             )

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from dent_bot.config import get_config
+from dentbot.config import get_config
 
 logger = logging.getLogger(__name__)
 

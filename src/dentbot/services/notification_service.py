@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, Awaitable
 
-# Telegram'ın temel nesnelerini varsayıyoruz (Şu an sync çalışması için await/async kaldırıldı)
 try:
     from telegram import Bot, InlineKeyboardMarkup, InlineKeyboardButton
-    # Placeholder: Bot'un tipini belirlemek için
 except ImportError:
     Bot = Any
     InlineKeyboardMarkup = Any
@@ -16,17 +15,30 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _run_async(coro: Awaitable) -> Any:
+    """
+    SYNC thread'den ASYNC coroutine'i güvenle çalıştırmak için kullanılır.
+    Amacı: ApprovalService'in sync thread'inde Bot'u çağırabilmesini sağlamaktır.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    return loop.run_until_complete(coro)
+
+
 class NotificationService:
     """
     Randevu ile ilgili bildirimleri (hasta ve doktor) yöneten servis.
-    Senkron (Sync) çalışacak şekilde düzenlendi.
+    Bu servis, SYNC metotlar sunar, ancak dahili olarak ASYNC Bot metodlarını çağırır.
     """
     
     def __init__(self, telegram_bot: Bot):
         self.bot = telegram_bot
 
     def _format_appointment_details(self, appointment_data: Dict[str, Any]) -> str:
-        """Randevu detaylarını okunabilir formatta stringe çevirir."""
         ref_code = f"APT-{appointment_data.get('id', 0):06d}"
         
         return (
@@ -39,29 +51,29 @@ class NotificationService:
             f"**Durum:** {appointment_data.get('status', 'pending').upper()}"
         )
 
-    def send_to_patient(self, chat_id: int, message: str) -> bool: # ⭐ SYNC
-        """Hastaya bildirim gönderir (Bot'un sync versiyonu veya loglama)."""
+    def send_to_patient(self, chat_id: int, message: str) -> bool:
+        """Hastaya bildirim gönderir (Bot coroutine'i sarmalanır)."""
         logger.info(f"PATIENT NOTIFICATION (Chat ID: {chat_id}): {message}")
         try:
-            # Bot'un sync metodunu çağırıyoruz. telegram.ext bunu thread-safe olarak halleder.
-            self.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown') 
+            coro = self.bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+            _run_async(coro)
             return True
         except Exception as e:
             logger.error(f"Hastaya mesaj gönderilirken hata: {e}")
             return False
 
-    def send_to_dentist(self, chat_id: int, message: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> bool: # ⭐ SYNC
-        """Doktora bildirim gönderir (telegram_chat_id'ye)."""
+    def send_to_dentist(self, chat_id: int, message: str, reply_markup: Optional[InlineKeyboardMarkup] = None) -> bool:
+        """Doktora bildirim gönderir (Bot coroutine'i sarmalanır)."""
         logger.info(f"DENTIST NOTIFICATION (Chat ID: {chat_id}): {message}")
         try:
-            self.bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup, parse_mode='Markdown')
+            coro = self.bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup, parse_mode='Markdown')
+            _run_async(coro)
             return True
         except Exception as e:
             logger.error(f"Doktora mesaj gönderilirken hata: {e}")
             return False
 
-    def send_appointment_confirmation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
-        """Hastaya 'Randevu talebiniz oluşturuldu, doktor onayı bekleniyor' mesajı gönderir."""
+    def send_appointment_confirmation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
         ref_code = f"APT-{appointment_data.get('id', '...')}"
         message = (
             f"✅ **Randevu Talebi Oluşturuldu!**\n\n"
@@ -72,8 +84,7 @@ class NotificationService:
         )
         self.send_to_patient(patient_chat_id, message)
 
-    def send_approval_request(self, appointment_data: Dict[str, Any], dentist_chat_id: int) -> None: # ⭐ SYNC
-        """Doktora 'Yeni randevu talebi var, onaylar mısınız?' mesajı gönderir (Inline Keyboard ile)."""
+    def send_approval_request(self, appointment_data: Dict[str, Any], dentist_chat_id: int) -> None:
         ref_code = f"APT-{appointment_data.get('id', '...')}"
         app_id = appointment_data['id']
         
@@ -98,8 +109,7 @@ class NotificationService:
             
         self.send_to_dentist(dentist_chat_id, message, reply_markup)
 
-    def send_approval_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
-        """Hastaya 'Randevunuz onaylandı' mesajı gönderir."""
+    def send_approval_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
         message = (
             f"🎉 **Randevunuz ONAYLANDI!**\n\n"
             f"Randevu Kodunuz: **APT-{appointment_data.get('id', 0):06d}**\n"
@@ -109,19 +119,17 @@ class NotificationService:
         )
         self.send_to_patient(patient_chat_id, message)
 
-    def send_rejection_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
-        """Hastaya 'Randevunuz onaylanamadı' mesajı gönderir."""
+    def send_rejection_notification(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
         message = (
             f"❌ **Randevu Talebiniz Reddedildi**\n\n"
-            f"Randevu Kodu: **APT-{appointment_data.get('id', 0):06d}**\n"
+            f"Randevu Kodunuz: **APT-{appointment_data.get('id', 0):06d}**\n"
             f"Üzgünüz, randevu talebiniz doktorumuz tarafından onaylanamamıştır.\n\n"
             f"Detaylar:\n{self._format_appointment_details(appointment_data)}\n\n"
             f"Lütfen alternatif bir gün veya saat belirterek tekrar deneyin."
         )
         self.send_to_patient(patient_chat_id, message)
 
-    def send_reminder(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
-        """Hastaya randevu hatırlatması gönderir."""
+    def send_reminder(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
         message = (
             f"⏰ **RANDEVU HATIRLATMASI**\n\n"
             f"Yarın, **{appointment_data.get('time_slot', 'N/A')}**'da **{appointment_data.get('treatment_type', 'randevu')}** için randevunuz bulunmaktadır.\n"
@@ -129,8 +137,7 @@ class NotificationService:
         )
         self.send_to_patient(patient_chat_id, message)
 
-    def send_cancellation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None: # ⭐ SYNC
-        """Hastaya randevu iptal bilgisini gönderir."""
+    def send_cancellation(self, appointment_data: Dict[str, Any], patient_chat_id: int) -> None:
         message = (
             f"🗑️ **Randevu İptal Edildi**\n\n"
             f"**APT-{appointment_data.get('id', 0):06d}** kodlu randevunuz başarıyla iptal edilmiştir.\n"

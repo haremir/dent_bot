@@ -3,50 +3,23 @@ from typing import Any, Dict, Optional
 import logging
 from datetime import datetime
 
-from dentbot.tools import tool, get_adapter 
-from dentbot.services import ApprovalService, NotificationService 
+# ⭐ DÜZELTME: get_approval_service'i import et
+from dentbot.tools import tool, get_adapter, get_approval_service 
+from dentbot.services import ApprovalService # Sadece Typing için
 from dentbot.models import Appointment
 from dentbot.exceptions import AppointmentError, DatabaseError
 
 logger = logging.getLogger(__name__)
 
-# ApprovalService'i verimli kullanmak için tek bir instance tutarız
-_approval_service: Optional[ApprovalService] = None
-
-def _get_approval_service() -> ApprovalService:
-    """Tek bir ApprovalService örneği döndürür (Lazy Initialization)."""
-    global _approval_service
-    if _approval_service is None:
-        adapter = get_adapter() 
-        # NotificationService (Bot) global olarak main.py'de set edilecek. 
-        # Burada sadece adapter'ı kullanarak NotificationService'i mock'lamalıyız.
-        
-        try:
-            # Gerçek Bot objesini kullanmak yerine, sadece sync metodları olan bir mock yapısı kullanıyoruz.
-            # Gerçek Bot objesi, Telegram handler tarafından Thread'e enjekte edilecektir.
-            from telegram import Bot
-            dummy_bot = Bot(token="dummy_token")
-            notification_service = NotificationService(telegram_bot=dummy_bot)
-            _approval_service = ApprovalService(adapter=adapter, notification_service=notification_service)
-        except Exception:
-            logger.warning("Telegram Bot kütüphanesi bulunamadı. NotificationService, loglama moduyla başlatıldı.")
-            
-            class DummyNotificationService:
-                def send_approval_request(self, *args, **kwargs): pass
-                def send_appointment_confirmation(self, *args, **kwargs): pass
-                def send_approval_notification(self, *args, **kwargs): pass
-                def send_rejection_notification(self, *args, **kwargs): pass
-                def send_cancellation(self, *args, **kwargs): pass
-                
-            _approval_service = ApprovalService(adapter=adapter, notification_service=DummyNotificationService())
-            
-    return _approval_service
+# Global ApprovalService'i doğrudan tools.__init__.py'den çekiyoruz
+# Bu alandaki tüm Dummy Bot/Service kodları kaldırılmıştır.
 
 # ------------------------------------
 # Yardımcı Fonksiyonlar (Validasyon & ID Çıkarma)
 # ------------------------------------
 
 def _validate_date_format(date_str: str) -> bool:
+    """Tarih formatını kontrol eder (YYYY-MM-DD)."""
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
         return True
@@ -54,13 +27,18 @@ def _validate_date_format(date_str: str) -> bool:
         return False
 
 def _validate_phone(phone: str) -> bool:
+    """Telefon numarasını kontrol eder (en az 10 hane)."""
     digits = [c for c in phone if c.isdigit()]
     return len(digits) >= 10
 
 def _validate_email(email: str) -> bool:
+    """E-posta adresini kontrol eder (@ ve . içeriyor mu)."""
     return "@" in email and "." in email
 
 def _extract_appointment_id(appointment_id: Any) -> int:
+    """
+    Randevu ID'sinden tam sayı ID'yi çıkarır.
+    """
     if isinstance(appointment_id, int):
         return appointment_id
     
@@ -82,7 +60,7 @@ def _extract_appointment_id(appointment_id: Any) -> int:
 # ------------------------------------
 
 @tool
-def create_appointment_request( # ⭐ SYNC
+def create_appointment_request( 
     dentist_id: int, 
     patient_name: str, 
     patient_phone: str, 
@@ -92,32 +70,13 @@ def create_appointment_request( # ⭐ SYNC
     treatment_type: str,
     duration_minutes: int,
     notes: Optional[str] = None,
-    # ⭐ KRİTİK: Bu alan, Telegram handler tarafından LLM'in görmediği bir argüman olarak eklenecek.
     patient_chat_id: Optional[int] = None, 
 ) -> str:
     """
-    Yeni bir randevu talebi oluşturur, doktor onayına sunar ve hastaya bildirim gönderir.
-    LLM, tüm zorunlu alanları (dentist_id, patient_name, phone, email, date, time_slot, treatment_type, duration_minutes) 
-    müşteriden aldıktan sonra çağırır.
-    
-    Args:
-        dentist_id: Randevu alınacak doktorun ID'si.
-        patient_name: Hastanın tam adı.
-        patient_phone: Hastanın telefon numarası (en az 10 hane).
-        patient_email: Hastanın e-posta adresi (@ ve . içermelidir).
-        appointment_date: Randevu tarihi (YYYY-MM-DD).
-        time_slot: Randevu saati (HH:MM).
-        treatment_type: Alınacak tedavinin adı (örneğin: "Dolgu").
-        duration_minutes: Tedavinin tahmini süresi (dakika).
-        notes: Ek notlar (opsiyonel).
-        patient_chat_id: Bildirimler için hastanın Telegram Chat ID'si (LLM bu alanı doldurmaz).
-        
-    Returns:
-        Randevu talebinin durumunu belirten formatlanmış bir mesaj.
+    Yeni bir randevu talebi oluşturur, doktor onayına sunar.
     """
     
     if not patient_chat_id:
-        # Bu hata mesajı LLM'e gitmemeli, Telegram handler'ı uyarmalıdır.
         logger.error("create_appointment_request çağrılırken patient_chat_id eksik!")
         return "❌ Randevu oluşturma hatası: İletişim bilgisi eksik (Sistem Hatası: Lütfen Yöneticinize Başvurun)."
 
@@ -138,10 +97,11 @@ def create_appointment_request( # ⭐ SYNC
         "treatment_type": treatment_type,
         "duration_minutes": duration_minutes,
         "notes": notes,
-        "patient_chat_id": patient_chat_id, # ⭐ Chat ID eklendi
+        "patient_chat_id": patient_chat_id, 
     }
 
-    approval_service = _get_approval_service()
+    # ⭐ Global ApprovalService'i kullan
+    approval_service = get_approval_service()
     
     try:
         new_appointment = approval_service.create_pending_appointment(
@@ -213,7 +173,8 @@ def cancel_appointment(appointment_id: Any) -> str:
         # Hastaya iptal bildirimi gönder (DB'deki chat_id kullanılır)
         patient_chat_id = appointment_data.get('patient_chat_id')
         if patient_chat_id:
-             _get_approval_service().notification_service.send_cancellation(
+             # ⭐ Global ApprovalService'in patient_notif'ini kullan
+             get_approval_service().patient_notif.send_cancellation(
                  appointment_data, patient_chat_id
              )
         
@@ -269,4 +230,4 @@ def reschedule_appointment(
         return f"❌ Hata: Randevu güncellenirken bir veritabanı hatası oluştu: {str(e)}"
     except Exception as e:
         logger.error(f"Randevu güncellenirken beklenmeyen hata: {e}")
-        return "❌ Hata: Randevu güncelleme sırasında beklenmeyen bir sorun oluştu."
+        return "❌ Hata: Randevu güncelleme sırasında beklenmeyen bir sorun oluştu. Lütfen tekrar deneyin."
