@@ -58,66 +58,23 @@ def get_notification_service(bot: Any) -> NotificationService:
     return _notification_service
 
 
+# --- LLM TOOL SETUP (KORUNAN KRİTİK KOD BLOKLARI) ---
 def create_langchain_tools() -> List[StructuredTool]:
     """Create LangChain StructuredTool objects from our new tool functions."""
 
     # ⭐ Yeni Tool'lar güncellendi
     tools = [
-        StructuredTool.from_function(
-            func=list_dentists,
-            name="list_dentists",
-            description="Klinikteki tüm aktif diş hekimlerini uzmanlık alanları ve ID'leriyle listeler. Kullanıcı doktorları sorduğunda kullanılır.",
-        ),
-        StructuredTool.from_function(
-            func=get_dentist_specialties,
-            name="get_dentist_specialties",
-            description="Klinikteki tüm diş hekimlerinin uzmanlık alanlarını gruplanmış şekilde listeler.",
-        ),
-        StructuredTool.from_function(
-            func=get_dentist_schedule,
-            name="get_dentist_schedule",
-            description="Belirli bir diş hekiminin o günkü çalışma saatlerini ve boş randevu slotlarını gösterir. Doktor ID ve tarih (YYYY-MM-DD) zorunludur.",
-        ),
-        StructuredTool.from_function(
-            func=get_treatment_list,
-            name="get_treatment_list",
-            description="Klinikte sunulan tüm aktif tedavi hizmetlerini süreleri ve fiyat bilgileriyle (varsa) listeler. Tedavileri veya fiyat/süre bilgisini öğrenmek için kullanılır.",
-        ),
-        StructuredTool.from_function(
-            func=get_treatment_duration,
-            name="get_treatment_duration",
-            description="Belirli bir tedavi adının tahmini süresini dakika cinsinden döndürür. Randevu oluşturmadan önce süre bilgisi alınmak için kullanılır. Tedavi adı zorunludur.",
-        ),
-        StructuredTool.from_function(
-            func=check_available_slots,
-            name="check_available_slots",
-            description="Belirli bir hekim (dentist_id) ve tarih (YYYY-MM-DD) için müsait olduğu tüm slotları listeler.",
-        ),
-        StructuredTool.from_function(
-            func=check_availability_by_treatment,
-            name="check_availability_by_treatment",
-            description="Belirli bir tedavi (treatment_name) için uygun olan doktorları ve boş slot sayılarını listeler.",
-        ),
-        StructuredTool.from_function(
-            func=create_appointment_request,
-            name="create_appointment_request",
-            description="Yeni bir randevu talebi oluşturur, doktor onayına sunar. Doktor ID, Hasta Adı, Telefon, E-posta, Tarih, Saat, Tedavi Adı ve Süresi zorunludur.",
-        ),
-        StructuredTool.from_function(
-            func=get_appointment_details,
-            name="get_appointment_details",
-            description="Randevu ID'si (örneğin: APT-000123) kullanarak randevu detaylarını getirir.",
-        ),
-        StructuredTool.from_function(
-            func=cancel_appointment,
-            name="cancel_appointment",
-            description="Mevcut bir randevuyu ID'si ile iptal eder. Randevu ID'si zorunludur.",
-        ),
-        StructuredTool.from_function(
-            func=reschedule_appointment,
-            name="reschedule_appointment",
-            description="Mevcut bir randevunun tarih ve/veya saatini ID ile günceller.",
-        ),
+        StructuredTool.from_function(func=list_dentists, name="list_dentists", description="Klinikteki tüm aktif diş hekimlerini uzmanlık alanları ve ID'leriyle listeler. Kullanıcı doktorları sorduğunda kullanılır."),
+        StructuredTool.from_function(func=get_dentist_specialties, name="get_dentist_specialties", description="Klinikteki tüm diş hekimlerinin uzmanlık alanlarını gruplanmış şekilde listeler."),
+        StructuredTool.from_function(func=get_dentist_schedule, name="get_dentist_schedule", description="Belirli bir diş hekiminin o günkü çalışma saatlerini ve boş randevu slotlarını gösterir. Doktor ID ve tarih (YYYY-MM-DD) zorunludur."),
+        StructuredTool.from_function(func=get_treatment_list, name="get_treatment_list", description="Klinikte sunulan tüm aktif tedavi hizmetlerini süreleri ve fiyat bilgileriyle (varsa) listeler. Tedavileri veya fiyat/süre bilgisini öğrenmek için kullanılır."),
+        StructuredTool.from_function(func=get_treatment_duration, name="get_treatment_duration", description="Belirli bir tedavi adının tahmini süresini dakika cinsinden döndürür. Randevu oluşturmadan önce süre bilgisi alınmak için kullanılır. Tedavi adı zorunludur."),
+        StructuredTool.from_function(func=check_available_slots, name="check_available_slots", description="Belirli bir hekim (dentist_id) ve tarih (YYYY-MM-DD) için müsait olduğu tüm slotları listeler."),
+        StructuredTool.from_function(func=check_availability_by_treatment, name="check_availability_by_treatment", description="Belirli bir tedavi (treatment_name) için uygun olan doktorları ve boş slot sayılarını listeler."),
+        StructuredTool.from_function(func=create_appointment_request, name="create_appointment_request", description="Yeni bir randevu talebi oluşturur, doktor onayına sunar. Doktor ID, Hasta Adı, Telefon, E-posta, Tarih, Saat, Tedavi Adı ve Süresi zorunludur."),
+        StructuredTool.from_function(func=get_appointment_details, name="get_appointment_details", description="Randevu ID'si (örneğin: APT-000123) kullanarak randevu detaylarını getirir."),
+        StructuredTool.from_function(func=cancel_appointment, name="cancel_appointment", description="Mevcut bir randevuyu ID'si ile iptal eder. Randevu ID'si zorunludur."),
+        StructuredTool.from_function(func=reschedule_appointment, name="reschedule_appointment", description="Mevcut bir randevunun tarih ve/veya saatini ID ile günceller."),
     ]
 
     return tools
@@ -160,6 +117,7 @@ def get_llm() -> ChatGroq:
             max_retries=2, 
         )
     return _llm
+# --- LLM TOOL SETUP SONU ---
 
 
 def _prepare_history(context: ContextTypes.DEFAULT_TYPE) -> List[Any]:
@@ -280,8 +238,8 @@ async def handle_message_with_agent(
     history = _prepare_history(context)
     history_snapshot = list(history)
     
-    # ⭐ SYNC _run_tool_loop'u asyncio.to_thread ile ASYNC ortama taşı
     try:
+        # ⭐ SYNC _run_tool_loop'u asyncio.to_thread ile ASYNC ortama taşı
         response, updated_messages = await asyncio.to_thread(
             _run_tool_loop, 
             user_message, 
@@ -407,12 +365,10 @@ def create_telegram_app() -> Application:
     
     application.bot_data["clinic_name"] = config.get_clinic_display_name()
     
-    # Adapter set etme işlemi main.py'de yapılacaktır.
-    
     return application
 
 
-async def run_telegram_bot(application: Application) -> None: # ⭐ DÜZELTME: Application parametre olarak alınır
+async def run_telegram_bot(application: Application) -> None:
     """Hasta botunu çalıştırır."""
     
     logger.info("Starting Patient-facing Telegram bot...")

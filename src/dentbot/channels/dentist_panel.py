@@ -169,7 +169,7 @@ def create_dentist_panel_app() -> Application:
     return application
 
 
-async def run_dentist_panel(application: Application) -> None:
+async def run_dentist_panel(application: Application) -> None: # Runner signature DÜZELTİLDİ
     """Doktor panelini çalıştırır."""
     
     logger.info("Starting Dentist Panel bot...")

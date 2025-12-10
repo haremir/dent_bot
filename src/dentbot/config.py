@@ -112,101 +112,27 @@ class EnvironmentDentBotConfig(DentBotConfig):
     
     def create_adapter(self) -> AppointmentAdapter:
         """
-        Create SQLite adapter using this config's database URL.
+        Adapter'ı yaratır ve init eder. Artık seed işlemini çağırmaz! 
+        Seed işlemi, miras alan config'te yapılır.
         """
         db_url = self.get_database_url()
         adapter = SQLiteAppointmentAdapter(db_url)
         adapter.init() 
         
-        self.seed_database(adapter)
-        
+        # self.seed_database(adapter) çağrısı yok, çünkü CORE verisiz kalmalı.
+
         return adapter
 
-    # ⭐ FAZ 8, ADIM 30: Seed Database Metodu Eklendi
+    # KRİTİK: ÇEKİRDEKTEKİ seed_database BOŞ BIRAKILIR
     def seed_database(self, adapter: AppointmentAdapter) -> None:
-        """Demo kliniği için başlangıç doktor ve tedavi verilerini ekler."""
-        logger.info("Seeding demo database with initial dentists and treatments...")
-        
-        # 1. Tedavileri Ekle
-        try:
-            adapter.create_treatment({
-                "name": "Kontrol ve Muayene",
-                "duration_minutes": 20,
-                "price": 0.0,
-                "description": "Genel kontrol ve teşhis.",
-                "requires_approval": 0, 
-                "is_active": 1,
-            })
-            adapter.create_treatment({
-                "name": "Diş Temizliği",
-                "duration_minutes": 60,
-                "price": 450.0,
-                "description": "Diş taşı ve plak temizliği.",
-                "requires_approval": 1,
-                "is_active": 1,
-            })
-            adapter.create_treatment({
-                "name": "Dolgu Tedavisi",
-                "duration_minutes": 75,
-                "price": 700.0,
-                "description": "Basit veya orta seviye dolgu işlemleri.",
-                "requires_approval": 1,
-                "is_active": 1,
-            })
-            adapter.create_treatment({
-                "name": "Kanal Tedavisi",
-                "duration_minutes": 120,
-                "price": 1200.0,
-                "description": "Endodonti uzmanlığı gerektiren kapsamlı tedavi.",
-                "requires_approval": 1,
-                "is_active": 1,
-            })
-        except DatabaseError as e:
-            logger.warning(f"Tedaviler zaten var (Ignored): {e}")
-
-        # 2. Doktorları Ekle
-        try:
-            adapter.create_dentist({
-                "full_name": "Ahmet Yılmaz",
-                "specialty": "Genel Diş Hekimi",
-                "phone": "+905551112233",
-                "email": "ahmet@dentbot.com",
-                "telegram_chat_id": 1000000000,
-                "working_days": "Monday,Tuesday,Wednesday,Thursday,Friday",
-                "start_time": "09:00",
-                "end_time": "18:00",
-                "break_start": "12:00",
-                "break_end": "13:00",
-                "slot_duration": 30,
-                "is_active": 1,
-            })
-            adapter.create_dentist({
-                "full_name": "Ayşe Demir",
-                "specialty": "Ortodonti Uzmanı",
-                "phone": "+905554445566",
-                "email": "ayse@dentbot.com",
-                "telegram_chat_id": 1000000001,
-                "working_days": "Monday,Tuesday,Wednesday,Thursday",
-                "start_time": "10:00",
-                "end_time": "17:00",
-                "break_start": "13:00",
-                "break_end": "14:00",
-                "slot_duration": 45,
-                "is_active": 1,
-            })
-        except DatabaseError as e:
-            logger.warning(f"Doktorlar zaten var (Ignored): {e}")
-
-        logger.info("Database seeding complete.")
+        """Core, varsayılan olarak veri üretmez. Bu metot, miras alan sınıflar tarafından doldurulur."""
+        return None # Multi-Tenancy Saflığı Korundu.
 
 
 _CONFIG: Optional[DentBotConfig] = None
 
 
 def get_config() -> DentBotConfig:
-    """
-    Get or create global config instance.
-    """
     global _CONFIG
     if _CONFIG is None:
         class_path = os.getenv(CONFIG_ENV_KEY, DEFAULT_CONFIG_CLASS)
@@ -216,8 +142,5 @@ def get_config() -> DentBotConfig:
 
 
 def set_config(config: Optional[DentBotConfig]) -> None:
-    """
-    Override cached config (useful for tests and manual setup).
-    """
     global _CONFIG
     _CONFIG = config
