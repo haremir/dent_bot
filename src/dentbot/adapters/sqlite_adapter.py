@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dentbot.exceptions import DatabaseError
 
+logger = logging.getLogger(__name__)
+
 class SQLiteAppointmentAdapter:
-    """SQLite veritabanı için randevu ve klinik verisi adaptörü."""
+    """SQLite veritabanı için tam kapsamlı randevu ve klinik veri adaptörü."""
     
     def __init__(self, db_url: str):
         # Format: sqlite:///path
@@ -18,6 +21,7 @@ class SQLiteAppointmentAdapter:
             self.db_path = db_url
             
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"SQLiteAdapter başlatıldı. Veritabanı yolu: {self.db_path}")
 
     def _conn(self) -> sqlite3.Connection:
         """Veritabanı bağlantısını döndürür ve row_factory'yi ayarlar."""
@@ -26,18 +30,20 @@ class SQLiteAppointmentAdapter:
             conn.row_factory = sqlite3.Row
             return conn
         except sqlite3.Error as e:
+            logger.error(f"Veritabanı bağlantı hatası: {e}")
             raise DatabaseError(f"Veritabanına bağlanılamadı: {e}") from e
 
     # ------------------------------------
     # Lifecycle
     # ------------------------------------
     def init(self) -> None:
-        """Tabloları oluşturur (CREATE TABLE IF NOT EXISTS)."""
+        """Tabloları eksiksiz oluşturur."""
+        logger.info("Veritabanı tabloları kontrol ediliyor/oluşturuluyor...")
         try:
             with self._conn() as conn:
                 cur = conn.cursor()
                 
-                # 1. DENTIST Tablosu (Aynı kaldı)
+                # 1. DENTIST Tablosu
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS dentists (
@@ -59,7 +65,7 @@ class SQLiteAppointmentAdapter:
                     """
                 )
 
-                # 2. TREATMENT Tablosu (Aynı kaldı)
+                # 2. TREATMENT Tablosu
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS treatments (
@@ -75,7 +81,7 @@ class SQLiteAppointmentAdapter:
                     """
                 )
 
-                # 3. APPOINTMENT Tablosu (patient_chat_id eklendi)
+                # 3. APPOINTMENT Tablosu
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS appointments (
@@ -90,149 +96,150 @@ class SQLiteAppointmentAdapter:
                         duration_minutes INTEGER NOT NULL,
                         notes TEXT,
                         status TEXT NOT NULL DEFAULT 'pending',
-                        patient_chat_id INTEGER, -- ⭐ YENİ ALAN EKLENDİ
+                        patient_chat_id INTEGER,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY(dentist_id) REFERENCES dentists(id),
-                        UNIQUE(dentist_id, appointment_date, time_slot) ON CONFLICT FAIL
+                        FOREIGN KEY(dentist_id) REFERENCES dentists(id)
                     )
                     """
                 )
                 conn.commit()
+                logger.info("Tablo başlatma işlemi başarıyla tamamlandı.")
         except sqlite3.Error as e:
+            logger.error(f"Tablo başlatma sırasında SQLite hatası: {e}")
             raise DatabaseError(f"Tablo başlatma hatası: {e}") from e
 
     # ------------------------------------
-    # Yardımcı Metodlar (Aynı kaldı)
+    # Yardımcı Metodlar
     # ------------------------------------
     def _get_by_id(self, table_name: str, id_value: int) -> Optional[Dict[str, Any]]:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute(f"SELECT * FROM {table_name} WHERE id = ?", (id_value,))
-            row = cur.fetchone()
-            return dict(row) if row else None
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                cur.execute(f"SELECT * FROM {table_name} WHERE id = ?", (id_value,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except sqlite3.Error as e:
+            logger.error(f"{table_name} tablosundan ID:{id_value} çekilirken hata: {e}")
+            return None
             
     def _list_all(self, table_name: str, where_clause: Optional[str] = None, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            query = f"SELECT * FROM {table_name}"
-            if where_clause:
-                query += f" WHERE {where_clause}"
-            query += " ORDER BY id DESC"
-            cur.execute(query, params or ())
-            return [dict(r) for r in cur.fetchall()]
-
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                query = f"SELECT * FROM {table_name}"
+                if where_clause:
+                    query += f" WHERE {where_clause}"
+                query += " ORDER BY id DESC"
+                cur.execute(query, params or ())
+                return [dict(r) for r in cur.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"{table_name} listelenirken hata: {e}")
+            return []
 
     # ------------------------------------
-    # Dentist CRUD (Aynı kaldı)
+    # Dentist CRUD
     # ------------------------------------
     def create_dentist(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            fields = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
-            values = tuple(data.values())
-            
-            cur.execute(f"INSERT INTO dentists ({fields}) VALUES ({placeholders})", values)
-            dentist_id = cur.lastrowid
-            conn.commit()
-            return self._get_by_id('dentists', dentist_id) or {"id": dentist_id}
-
-    def get_dentist(self, dentist_id: int) -> Optional[Dict[str, Any]]:
-        return self._get_by_id('dentists', dentist_id)
-
-    def list_dentists(self, is_active: Optional[bool] = True) -> List[Dict[str, Any]]:
-        where = "is_active = ?" if is_active is not None else None
-        params = (1,) if is_active else (0,) if is_active is not None else None
-        return self._list_all('dentists', where, params)
-        
-    def update_dentist(self, dentist_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not data:
-            return self.get_dentist(dentist_id)
-            
-        with self._conn() as conn:
-            cur = conn.cursor()
-            set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
-            values = tuple(data.values()) + (dentist_id,)
-            
-            cur.execute(f"UPDATE dentists SET {set_clause} WHERE id = ?", values)
-            conn.commit()
-            return self.get_dentist(dentist_id)
-
-    def delete_dentist(self, dentist_id: int) -> bool:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM dentists WHERE id = ?", (dentist_id,))
-            conn.commit()
-            return cur.rowcount > 0
-
-    # ------------------------------------
-    # Treatment CRUD (Aynı kaldı)
-    # ------------------------------------
-    def create_treatment(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            fields = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
-            values = tuple(data.values())
-            
-            try:
-                cur.execute(f"INSERT INTO treatments ({fields}) VALUES ({placeholders})", values)
-                treatment_id = cur.lastrowid
-                conn.commit()
-                return self._get_by_id('treatments', treatment_id) or {"id": treatment_id}
-            except sqlite3.IntegrityError as e:
-                 raise DatabaseError(f"Tedavi oluşturma hatası: {e}. Muhtemelen aynı isimde kayıt var.") from e
-
-
-    def get_treatment(self, treatment_id: int) -> Optional[Dict[str, Any]]:
-        return self._get_by_id('treatments', treatment_id)
-
-    def list_treatments(self, is_active: Optional[bool] = True) -> List[Dict[str, Any]]:
-        where = "is_active = ?" if is_active is not None else None
-        params = (1,) if is_active else (0,) if is_active is not None else None
-        return self._list_all('treatments', where, params)
-        
-    def update_treatment(self, treatment_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not data:
-            return self.get_treatment(treatment_id)
-            
-        with self._conn() as conn:
-            cur = conn.cursor()
-            set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
-            values = tuple(data.values()) + (treatment_id,)
-            
-            cur.execute(f"UPDATE treatments SET {set_clause} WHERE id = ?", values)
-            conn.commit()
-            return self.get_treatment(treatment_id)
-
-    def delete_treatment(self, treatment_id: int) -> bool:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM treatments WHERE id = ?", (treatment_id,))
-            conn.commit()
-            return cur.rowcount > 0
-
-
-    # ------------------------------------
-    # Appointment CRUD (Aynı kaldı)
-    # ------------------------------------
-    def create_appointment(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info(f"Yeni doktor oluşturuluyor: {data.get('full_name')}")
         try:
             with self._conn() as conn:
                 cur = conn.cursor()
                 fields = ', '.join(data.keys())
                 placeholders = ', '.join('?' * len(data))
                 values = tuple(data.values())
-                
-                cur.execute(f"INSERT INTO appointments ({fields}) VALUES ({placeholders})", values)
-                appointment_id = cur.lastrowid
+                cur.execute(f"INSERT INTO dentists ({fields}) VALUES ({placeholders})", values)
+                dentist_id = cur.lastrowid
                 conn.commit()
-                return self._get_by_id('appointments', appointment_id) or {"id": appointment_id}
-        except sqlite3.IntegrityError as e:
-            if 'UNIQUE constraint failed' in str(e):
-                raise DatabaseError("Randevu çakışması: Aynı gün ve saatte bu doktor için zaten bir randevu mevcut.") from e
-            raise DatabaseError(f"Randevu oluşturma hatası: {e}") from e
+                return self._get_by_id('dentists', dentist_id) or {"id": dentist_id}
+        except sqlite3.Error as e:
+            logger.error(f"Doktor oluşturma hatası: {e}")
+            raise DatabaseError(f"Doktor oluşturulamadı: {e}")
 
+    def get_dentist(self, dentist_id: int) -> Optional[Dict[str, Any]]:
+        return self._get_by_id('dentists', dentist_id)
+
+    def list_dentists(self, is_active: Optional[bool] = True) -> List[Dict[str, Any]]:
+        where = "is_active = ?" if is_active is not None else None
+        params = (1,) if is_active is True else (0,) if is_active is False else None
+        return self._list_all('dentists', where, params)
+        
+    def update_dentist(self, dentist_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not data: return self.get_dentist(dentist_id)
+        logger.info(f"Doktor ID:{dentist_id} güncelleniyor: {list(data.keys())}")
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
+                values = tuple(data.values()) + (dentist_id,)
+                cur.execute(f"UPDATE dentists SET {set_clause} WHERE id = ?", values)
+                conn.commit()
+                return self.get_dentist(dentist_id)
+        except sqlite3.Error as e:
+            logger.error(f"Doktor güncelleme hatası: {e}")
+            return None
+
+    def update_dentist_chat_id(self, dentist_id: int, chat_id: int) -> Optional[Dict[str, Any]]:
+        """Doktorun Telegram Chat ID'sini kaydeder."""
+        return self.update_dentist(dentist_id, {"telegram_chat_id": chat_id})
+
+    def delete_dentist(self, dentist_id: int) -> bool:
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM dentists WHERE id = ?", (dentist_id,))
+                conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error:
+            return False
+
+    # ------------------------------------
+    # Treatment CRUD
+    # ------------------------------------
+    def create_treatment(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info(f"Yeni tedavi ekleniyor: {data.get('name')}")
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                fields = ', '.join(data.keys())
+                placeholders = ', '.join('?' * len(data))
+                values = tuple(data.values())
+                cur.execute(f"INSERT INTO treatments ({fields}) VALUES ({placeholders})", values)
+                tid = cur.lastrowid
+                conn.commit()
+                return self._get_by_id('treatments', tid) or {"id": tid}
+        except sqlite3.IntegrityError as e:
+            logger.warning(f"Tedavi zaten mevcut: {data.get('name')}")
+            raise DatabaseError(f"Tedavi zaten mevcut: {e}")
+        except sqlite3.Error as e:
+            raise DatabaseError(f"Tedavi oluşturma hatası: {e}")
+
+    def get_treatment(self, treatment_id: int) -> Optional[Dict[str, Any]]:
+        return self._get_by_id('treatments', treatment_id)
+
+    def list_treatments(self, is_active: Optional[bool] = True) -> List[Dict[str, Any]]:
+        where = "is_active = ?" if is_active is not None else None
+        params = (1,) if is_active is True else (0,) if is_active is False else None
+        return self._list_all('treatments', where, params)
+
+    # ------------------------------------
+    # Appointment CRUD
+    # ------------------------------------
+    def create_appointment(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info(f"Yeni randevu kaydı denemesi: Hasta {data.get('patient_name')}")
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                fields = ', '.join(data.keys())
+                placeholders = ', '.join('?' * len(data))
+                values = tuple(data.values())
+                cur.execute(f"INSERT INTO appointments ({fields}) VALUES ({placeholders})", values)
+                app_id = cur.lastrowid
+                conn.commit()
+                logger.info(f"Randevu başarıyla oluşturuldu. ID: {app_id}")
+                return self._get_by_id('appointments', app_id) or {"id": app_id}
+        except sqlite3.Error as e:
+            logger.error(f"Randevu oluşturma hatası: {e}")
+            raise DatabaseError(f"Randevu kaydedilemedi: {e}")
 
     def get_appointment(self, appointment_id: int) -> Optional[Dict[str, Any]]:
         return self._get_by_id('appointments', appointment_id)
@@ -242,69 +249,42 @@ class SQLiteAppointmentAdapter:
         params = (status,) if status else None
         return self._list_all('appointments', where, params)
 
-    def list_appointments_by_dentist(self, dentist_id: int, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        where = "dentist_id = ?"
-        params = [dentist_id]
-        if status:
-            where += " AND status = ?"
-            params.append(status)
-        return self._list_all('appointments', where, tuple(params))
-        
-    def list_appointments_by_date(self, date: str, dentist_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        where = "appointment_date = ?"
-        params = [date]
-        if dentist_id:
-            where += " AND dentist_id = ?"
-            params.append(dentist_id)
-        return self._list_all('appointments', where, tuple(params))
-
     def update_appointment(self, appointment_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not data:
-            return self.get_appointment(appointment_id)
-
+        logger.info(f"Randevu ID:{appointment_id} güncelleniyor. Yeni durum: {data.get('status')}")
         try:
             with self._conn() as conn:
                 cur = conn.cursor()
                 set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
                 values = tuple(data.values()) + (appointment_id,)
-                
                 cur.execute(f"UPDATE appointments SET {set_clause} WHERE id = ?", values)
                 conn.commit()
                 return self.get_appointment(appointment_id)
-        except sqlite3.IntegrityError as e:
-            if 'UNIQUE constraint failed' in str(e):
-                raise DatabaseError("Randevu çakışması: Güncelleme, başka bir randevuyla çakışıyor.") from e
-            raise DatabaseError(f"Randevu güncelleme hatası: {e}") from e
-
-
-    def delete_appointment(self, appointment_id: int) -> bool:
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM appointments WHERE id = ?", (appointment_id,))
-            conn.commit()
-            return cur.rowcount > 0
-
-    # ------------------------------------
-    # Slot & Approval İşlemleri (Aynı kaldı)
-    # ------------------------------------
-    def get_booked_slots(self, date: str, dentist_id: int) -> List[str]:
-        """Belirtilen gün ve doktor için ONAYLANMIŞ veya BEKLEYEN dolu slotları döndürür."""
-        with self._conn() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT time_slot FROM appointments 
-                WHERE appointment_date = ? AND dentist_id = ? 
-                AND status IN ('pending', 'approved')
-                """,
-                (date, dentist_id)
-            )
-            return [row[0] for row in cur.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Randevu güncelleme hatası: {e}")
+            return None
 
     def approve_appointment(self, appointment_id: int) -> Optional[Dict[str, Any]]:
-        """Randevunun durumunu 'approved' olarak günceller."""
         return self.update_appointment(appointment_id, {"status": "approved"})
 
     def reject_appointment(self, appointment_id: int) -> Optional[Dict[str, Any]]:
-        """Randevunun durumunu 'cancelled' olarak günceller (teknik olarak iptal sayılır)."""
         return self.update_appointment(appointment_id, {"status": "cancelled"})
+
+    # ⭐ KRİTİK DEĞİŞİKLİK: Sadece saat değil, süre bilgisini de dönüyoruz
+    def get_booked_slots(self, date: str, dentist_id: int) -> List[Dict[str, Any]]:
+        """Belirtilen gün için dolu randevuların aralıklarını (saat ve süre) döner."""
+        try:
+            with self._conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT time_slot, duration_minutes 
+                    FROM appointments 
+                    WHERE appointment_date = ? AND dentist_id = ? 
+                    AND status IN ('pending', 'approved')
+                    """,
+                    (date, dentist_id)
+                )
+                return [dict(row) for row in cur.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Booked slots çekilirken hata: {e}")
+            return []

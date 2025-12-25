@@ -18,19 +18,34 @@ class ApprovalService:
     """
     
     def __init__(self, adapter: AppointmentAdapter, 
-                 patient_notification_service: NotificationService, # ⭐ Yeni Parametre
-                 dentist_notification_service: NotificationService # ⭐ Yeni Parametre
+                 patient_notification_service: NotificationService,
+                 dentist_notification_service: NotificationService
                 ):
         self.adapter = adapter
-        self.patient_notif = patient_notification_service # Hastaya bildirim
-        self.dentist_notif = dentist_notification_service # Doktora bildirim
+        self.patient_notif = patient_notification_service
+        self.dentist_notif = dentist_notification_service
+
+    # ⭐ YENİ METOT: Doktorun Telegram Chat ID'sini kaydetmek için
+    def register_dentist_chat_id(self, dentist_id: int, chat_id: int) -> None:
+        """Belirtilen doktorun Telegram Chat ID'sini kaydeder."""
+        try:
+            self.adapter.update_dentist_chat_id(dentist_id, chat_id)
+            logger.info(f"Doktor ID {dentist_id} için Chat ID {chat_id} başarıyla kaydedildi.")
+        except DatabaseError as e:
+            logger.error(f"Doktor Chat ID'si kaydedilirken DB hatası: {e}")
+            raise e
 
     def _get_dentist_chat_id(self, dentist_id: int) -> int:
         """Doktorun Telegram Chat ID'sini çeker."""
+        # Not: Bu çağrı için Adapter'da `update_dentist_chat_id` ve
+        # `get_dentist` metotlarının `telegram_chat_id` alanını desteklemesi gerekir.
+        
         dentist_data = self.adapter.get_dentist(dentist_id)
         chat_id = dentist_data.get('telegram_chat_id')
         if not chat_id:
             logger.error(f"Doktor ID {dentist_id} için Telegram Chat ID bulunamadı.")
+            # Hata kodunu -1 yerine 0 veya NoneType kullanmak daha temizdir,
+            # ancak mevcut implementasyonda -1'i koruyoruz.
             return -1
         return chat_id
 
@@ -57,11 +72,14 @@ class ApprovalService:
         dentist_id = new_appointment_data['dentist_id']
         dentist_chat_id = self._get_dentist_chat_id(dentist_id)
         
-        if dentist_chat_id != -1:
+        # ⭐ Hata Ayıklama Notu: Doktor Chat ID'si bulunamazsa bildirim gitmez
+        if dentist_chat_id != -1: 
             self.dentist_notif.send_approval_request( 
                 new_appointment_data, 
                 dentist_chat_id
             )
+        else:
+            logger.error(f"Doktor ID {dentist_id} için bildirim gönderilemedi: Chat ID bulunamadı.")
         
         return new_appointment_data
 

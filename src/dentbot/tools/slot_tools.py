@@ -48,8 +48,8 @@ def check_available_slots(dentist_id: int, date: str) -> str:
         Müsait slotları listeleyen formatlanmış bir string veya hata mesajı.
     """
     if not _validate_date_format(date):
-        return "❌ Hata: Geçersiz tarih formatı. Lütfen YYYY-MM-DD şeklinde giriniz."
-    
+        return "❌ Hata: Geçersiz tarih formatı\. Lütfen YYYY\-MM\-DD şeklinde giriniz\." # MarkdownV2'ye uyum
+
     slot_service = _get_slot_service()
     
     try:
@@ -61,20 +61,24 @@ def check_available_slots(dentist_id: int, date: str) -> str:
         
     except AppointmentError as e:
         # Doktor bulunamadı veya çalışmıyor hatası
-        return f"❌ Hata: Müsaitlik kontrolü yapılamadı. {str(e)}"
+        return f"❌ Hata: Müsaitlik kontrolü yapılamadı\. {str(e)}" # MarkdownV2'ye uyum
     except Exception as e:
         logger.error(f"Slot kontrolü sırasında beklenmeyen hata: {e}")
-        return "❌ Hata: Müsaitlik kontrolü sırasında beklenmeyen bir hata oluştu."
+        return "❌ Hata: Müsaitlik kontrolü sırasında beklenmeyen bir hata oluştu\." # MarkdownV2'ye uyum
 
     if not available_slots:
-        return f"❌ Dr. {dentist.full_name} için {date} tarihinde uygun boş slot bulunmamaktadır. Lütfen başka bir gün deneyin."
+        return f"❌ Dr\. **{dentist.full_name}** için {date} tarihinde uygun boş slot bulunmamaktadır\. Lütfen başka bir gün deneyin\." # MarkdownV2'ye uyum
 
-    result = f"Dr. {dentist.full_name} için {date} tarihindeki müsait slotlar:\n"
+    # ⭐ KRİTİK DÜZELTME: Okunabilirliği Artırılmış UX Formatı
+    result = f"Dr\. **{dentist.full_name}** için {date} tarihindeki müsait slotlar:\n\n"
     
-    # Slotları 4'erli gruplar halinde listele
+    # Slotları 4'erli gruplar halinde listele ve ayırıcı kullan
     grouped_slots = [available_slots[i:i + 4] for i in range(0, len(available_slots), 4)]
+    
     for group in grouped_slots:
-        result += " | ".join(group) + "\n"
+        result += " — ".join(group) + "\n"
+        
+    result += "\nLütfen tercih ettiğiniz saati belirtiniz\."
         
     return result
 
@@ -92,7 +96,7 @@ def check_availability_by_treatment(treatment_name: str, date: str) -> str:
         O günkü müsait doktorları ve boş slot sayılarını listeleyen formatlanmış bir string.
     """
     if not _validate_date_format(date):
-        return "❌ Hata: Geçersiz tarih formatı. Lütfen YYYY-MM-DD şeklinde giriniz."
+        return "❌ Hata: Geçersiz tarih formatı\. Lütfen YYYY\-MM\-DD şeklinde giriniz\." # MarkdownV2'ye uyum
         
     adapter = get_adapter()
     slot_service = _get_slot_service()
@@ -110,7 +114,7 @@ def check_availability_by_treatment(treatment_name: str, date: str) -> str:
             break
             
     if not found_treatment:
-        return f"❌ Hata: '{treatment_name}' adında aktif bir tedavi bulunamadı. Lütfen Tedavi Listesini kontrol edin."
+        return f"❌ Hata: **{treatment_name}** adında aktif bir tedavi bulunamadı\. Lütfen Tedavi Listesini kontrol edin\." # MarkdownV2'ye uyum
         
     # Tedavi süresini al
     required_duration = found_treatment.duration_minutes
@@ -126,8 +130,8 @@ def check_availability_by_treatment(treatment_name: str, date: str) -> str:
         
         # Doktor o gün çalışıyor mu?
         try:
-            day_of_week = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-            if not dentist.works_on_day(day_of_week):
+            day_of_week = datetime.strptime(date, "%Y-%MM-%d").strftime("%A")
+            if not dentist.works_on_day(day_of-week):
                 continue
         except ValueError:
             # Tarih formatı zaten başta kontrol edildi, burada beklenmez.
@@ -150,14 +154,14 @@ def check_availability_by_treatment(treatment_name: str, date: str) -> str:
             })
 
     if not available_dentists:
-        return f"❌ Üzgünüz, {date} tarihinde **{found_treatment.name}** tedavisi için hiçbir doktorumuzda müsaitlik bulunmamaktadır."
+        return f"❌ Üzgünüz, {date} tarihinde **{found_treatment.name}** tedavisi için hiçbir doktorumuzda müsaitlik bulunmamaktadır\." # MarkdownV2'ye uyum
 
-    result = f"**{found_treatment.name}** ({required_duration} dk.) tedavisi için {date} tarihindeki müsait doktorlar:\n"
+    result = f"**{found_treatment.name}** \({required_duration} dk\.\) tedavisi için {date} tarihindeki müsait doktorlar:\n" # MarkdownV2'ye uyum
     
     for item in available_dentists:
-        result += f"\n• Dr. **{item['name']}** (ID: {item['id']}) - {item['specialty']}\n"
-        result += f"  Toplam Boş Slot: {item['total_available_slots']} adet (her biri {item['duration_minutes']} dakika için idealdir).\n"
+        result += f"\n• Dr\. **{item['name']}** \(ID: {item['id']}\) \- {item['specialty']}\n"
+        result += f"  Toplam Boş Slot: {item['total_available_slots']} adet \(her biri {item['duration_minutes']} dakika için idealdir\)\." # MarkdownV2'ye uyum
         
-    result += "\nLütfen bir doktor seçerek randevu saatini kontrol edin."
+    result += "\n\nLütfen bir doktor seçerek randevu saatini kontrol edin\."
     
     return result

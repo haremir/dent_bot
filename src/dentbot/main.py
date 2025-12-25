@@ -1,19 +1,8 @@
-"""
-Main entry point for the Dent Bot system.
-Runs Patient Bot and Dentist Panel in parallel.
-"""
 from __future__ import annotations
-
 import asyncio
 import logging
 import sys
 import os
-
-# Python path düzeltmesi - proje kökünü path'e ekle
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.dirname(current_dir)
-project_root = os.path.dirname(src_dir)
-sys.path.insert(0, project_root)
 
 from dentbot.channels import (
     run_telegram_bot,
@@ -24,59 +13,43 @@ from dentbot.channels import (
 from dentbot.tools import get_adapter, set_approval_service
 from dentbot.services import NotificationService, ApprovalService
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+async def run_bots_parallel(patient_app, dentist_app):
+    """
+    Kritik: NotificationService ve ApprovalService loop içindeyken kurulmalı.
+    """
+    adapter = get_adapter()
+    
+    # 1. Servisleri aktif loop üzerinde başlat
+    patient_notif = NotificationService(telegram_bot=patient_app.bot)
+    dentist_notif = NotificationService(telegram_bot=dentist_app.bot)
+
+    approval_service = ApprovalService(
+        adapter=adapter,
+        patient_notification_service=patient_notif,
+        dentist_notification_service=dentist_notif,
+    )
+    set_approval_service(approval_service)
+
+    logger.info("Starting Parallel Bot Execution...")
+    await asyncio.gather(
+        run_telegram_bot(patient_app),
+        run_dentist_panel(dentist_app)
+    )
 
 def main():
-    """Main function to run the Dent Bot and the Dentist Panel in parallel."""
     try:
-        # 1. Veritabanını başlat ve seed et
-        logger.info("Initializing database and core services...")
-        adapter = get_adapter()
-
-        # 2. Application nesnelerini oluştur
         patient_app = create_telegram_app()
         dentist_app = create_dentist_panel_app()
-
-        patient_app.bot_data["adapter"] = adapter
-        dentist_app.bot_data["adapter"] = adapter
-
-        # 3. İki ayrı NotificationService instance'ı oluştur
-        patient_bot = patient_app.bot
-        dentist_bot = dentist_app.bot
-
-        patient_notif_service = NotificationService(telegram_bot=patient_bot)
-        dentist_notif_service = NotificationService(telegram_bot=dentist_bot)
-
-        # 4. ApprovalService'i iki farklı NotificationService ile oluştur
-        approval_service = ApprovalService(
-            adapter=adapter,
-            patient_notification_service=patient_notif_service,
-            dentist_notification_service=dentist_notif_service,
-        )
-
-        # 5. ApprovalService'i global olarak set et (Tools katmanının erişimi için)
-        set_approval_service(approval_service)
-
-        # 6. İki botu paralel olarak başlat (Runner'lara Application nesneleri geçirilir)
-        logger.info("Starting DentBot system (Patient Bot and Dentist Panel)...")
-
-        asyncio.run(asyncio.gather(
-            run_telegram_bot(patient_app),
-            run_dentist_panel(dentist_app)
-        ))
-
+        
+        # Sadece uygulama nesnelerini geçiriyoruz, loop içinde ayağa kalkacaklar
+        asyncio.run(run_bots_parallel(patient_app, dentist_app))
     except KeyboardInterrupt:
-        logger.info("Bot system stopped by user")
+        logger.info("Stopped by user")
     except Exception as e:
-        logger.error(f"Error running bot system: {e}", exc_info=True)
-        raise
-
+        logger.error(f"System Error: {e}", exc_info=True)
 
 if __name__ == "__main__":
     main()

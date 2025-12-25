@@ -78,6 +78,56 @@ from .appointment_tools import (
     reschedule_appointment
 )
 
+# LangChain StructuredTool oluşturmak için yardımcı fonksiyonlar
+from typing import List
+try:
+    from langchain_core.tools import StructuredTool
+except Exception:  # pragma: no cover - ortamda olmayabilir, import hatasını erteleyelim
+    StructuredTool = None  # type: ignore
+
+
+# LangChain için cache
+_tools: Optional[List["StructuredTool"]] = None
+_tool_map: Dict[str, "StructuredTool"] = {}
+
+
+def get_tools() -> List["StructuredTool"]:
+    """LangChain `StructuredTool` listesi döndürür (lazy init).
+
+    Eğer `langchain_core` yüklü değilse, boş bir liste döndürür.
+    """
+    global _tools, _tool_map
+    if _tools is None:
+        if StructuredTool is None:
+            _tools = []
+            _tool_map = {}
+            return _tools
+
+        _tools = [
+            StructuredTool.from_function(func=list_dentists, name="list_dentists", description="Klinikteki tüm aktif diş hekimlerini uzmanlık alanları ve ID'leriyle listeler."),
+            StructuredTool.from_function(func=get_dentist_specialties, name="get_dentist_specialties", description="Klinikteki tüm diş hekimlerinin uzmanlık alanlarını gruplanmış şekilde listeler."),
+            StructuredTool.from_function(func=get_dentist_schedule, name="get_dentist_schedule", description="Belirli bir diş hekiminin o günkü çalışma saatlerini ve boş randevu slotlarını gösterir."),
+            StructuredTool.from_function(func=get_treatment_list, name="get_treatment_list", description="Klinikte sunulan tüm aktif tedavi hizmetlerini süreleri ve fiyat bilgileriyle listeler."),
+            StructuredTool.from_function(func=get_treatment_duration, name="get_treatment_duration", description="Belirli bir tedavi adının tahmini süresini dakika cinsinden döndürür."),
+            StructuredTool.from_function(func=check_available_slots, name="check_available_slots", description="Belirli bir diş hekiminin belirli bir tarihte müsait olduğu tüm slotları listeler."),
+            StructuredTool.from_function(func=check_availability_by_treatment, name="check_availability_by_treatment", description="Belirli bir tedavi için uygun doktorları ve boş slot sayılarını listeler."),
+            StructuredTool.from_function(func=create_appointment_request, name="create_appointment_request", description="Yeni bir randevu talebi oluşturur, doktor onayına sunar."),
+            StructuredTool.from_function(func=get_appointment_details, name="get_appointment_details", description="Randevu ID'si kullanarak randevu detaylarını getirir."),
+            StructuredTool.from_function(func=cancel_appointment, name="cancel_appointment", description="Mevcut bir randevuyu ID'si ile iptal eder."),
+            StructuredTool.from_function(func=reschedule_appointment, name="reschedule_appointment", description="Mevcut bir randevunun tarih ve/veya saatini ID ile günceller."),
+        ]
+        _tool_map = {t.name: t for t in _tools}
+
+    return _tools
+
+
+def get_tool_map() -> Dict[str, "StructuredTool"]:
+    """Tool adından `StructuredTool` örneğine giden dict döndürür."""
+    global _tool_map
+    if not _tool_map:
+        get_tools()
+    return _tool_map
+
 
 __all__ = [
     # Utilities
@@ -99,4 +149,7 @@ __all__ = [
     "get_appointment_details",
     "cancel_appointment",
     "reschedule_appointment",
+    # LangChain helpers
+    "get_tools",
+    "get_tool_map",
 ]

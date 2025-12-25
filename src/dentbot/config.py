@@ -53,6 +53,8 @@ class EnvironmentDentBotConfig(DentBotConfig):
     def __init__(self) -> None:
         self._env = os.environ
 
+    # --- ZORUNLU ABSTRACT METOTLARIN IMPLEMENTASYONU ---
+    
     def get_database_url(self) -> str:
         return self._env.get("DATABASE_URL", "sqlite:///dentbot.db")
 
@@ -64,6 +66,7 @@ class EnvironmentDentBotConfig(DentBotConfig):
 
     def get_llm_timeout(self) -> int:
         try:
+            # 60 saniye varsayılan değer
             return int(self._env.get("LLM_TIMEOUT", "60"))
         except (TypeError, ValueError):
             return 60
@@ -73,6 +76,18 @@ class EnvironmentDentBotConfig(DentBotConfig):
 
     def get_dentist_telegram_token(self) -> Optional[str]:
         return self._env.get("DENTIST_TELEGRAM_TOKEN")
+    
+    def create_adapter(self) -> AppointmentAdapter:
+        """
+        Adapter'ı yaratır ve init eder. CORE olduğu için seed işlemi burada YOKTUR.
+        """
+        db_url = self.get_database_url()
+        adapter = SQLiteAppointmentAdapter(db_url)
+        adapter.init() 
+        
+        return adapter
+
+    # --- VARSAYILAN METOTLARIN OVERRIDE EDİLMESİ ---
     
     def get_clinic_display_name(self) -> str:
         return self._env.get("CLINIC_NAME", "DentBot Dental Clinic")
@@ -108,25 +123,13 @@ class EnvironmentDentBotConfig(DentBotConfig):
         prompt = self._env.get("DENTBOT_SYSTEM_PROMPT")
         if prompt:
             return prompt
+        # Base class'tan miras alır
         return super().get_system_prompt()
     
-    def create_adapter(self) -> AppointmentAdapter:
-        """
-        Adapter'ı yaratır ve init eder. Artık seed işlemini çağırmaz! 
-        Seed işlemi, miras alan config'te yapılır.
-        """
-        db_url = self.get_database_url()
-        adapter = SQLiteAppointmentAdapter(db_url)
-        adapter.init() 
-        
-        # self.seed_database(adapter) çağrısı yok, çünkü CORE verisiz kalmalı.
-
-        return adapter
-
     # KRİTİK: ÇEKİRDEKTEKİ seed_database BOŞ BIRAKILIR
     def seed_database(self, adapter: AppointmentAdapter) -> None:
         """Core, varsayılan olarak veri üretmez. Bu metot, miras alan sınıflar tarafından doldurulur."""
-        return None # Multi-Tenancy Saflığı Korundu.
+        return None 
 
 
 _CONFIG: Optional[DentBotConfig] = None

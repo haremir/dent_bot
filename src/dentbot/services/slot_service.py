@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta, time
 from typing import List, Optional, Dict, Any
 
-# ÖNEMLİ: Yeni paket yapılarından importlar
 from dentbot.adapters.base import AppointmentAdapter
-from dentbot.models import Dentist, Appointment # Appointment modelini sadece veri transferi için import ediyoruz
+from dentbot.models import Dentist, Appointment
 from dentbot.exceptions import AppointmentError, DatabaseError
 import logging
 
@@ -26,7 +25,7 @@ def _time_to_minutes(t: time) -> int:
 
 def _minutes_to_time_str(minutes: int) -> str:
     """Toplam dakikayı HH:MM stringi olarak döndürür."""
-    h = minutes // 60
+    h = (minutes // 60) % 24
     m = minutes % 60
     return f"{h:02d}:{m:02d}"
 
@@ -39,7 +38,8 @@ class SlotService:
     
     def __init__(self, adapter: AppointmentAdapter):
         self.adapter = adapter
-        
+        self.buffer_minutes = 15 # ⭐ Her randevu sonrası 15 dk temizlik/hazırlık süresi
+
     def _get_dentist_info(self, dentist_id: int) -> Dentist:
         """Adapter'dan doktor bilgisini çeker ve Dentist modeline dönüştürür."""
         dentist_data = self.adapter.get_dentist(dentist_id)
@@ -74,8 +74,6 @@ class SlotService:
                 current_minute = break_end_min
                 continue
 
-            # Molaya giren slotları yönet (Örn: 11:45'te başlayıp 12:15'te bitiyorsa, bu 11:45 slotunu da atlar
-            # veya molanın başlangıcına kadar olan kısmını ekler. Basitlik için atlıyoruz)
             if current_minute < break_start_min and slot_end > break_start_min:
                 current_minute = break_end_min
                 continue
@@ -92,32 +90,42 @@ class SlotService:
 
     def get_available_slots(self, dentist_id: int, date: str) -> List[str]:
         """
-        Belirli bir doktor ve tarih için mevcut (boş) randevu slotlarını döndürür.
+        Interval çakışma kontrolü ve tampon süre kullanarak müsait slotları döndürür.
         """
         try:
             dentist = self._get_dentist_info(dentist_id)
-        except AppointmentError:
-            # Doktor bulunamazsa boş liste döndür
-            return []
-        
-        # Doktorun o gün çalışıp çalışmadığını kontrol et
-        try:
             day_of_week = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
             if not dentist.works_on_day(day_of_week):
                 return []
-        except ValueError:
-            raise AppointmentError(f"Geçersiz tarih formatı: {date}. Beklenen YYYY-MM-DD.")
+        except Exception:
+            return []
             
-        # 1. Olası tüm slotları al
+        # 1. Olası tüm teorik başlangıç slotlarını al (Örn: 10:00, 10:30, ...)
         all_possible_slots = self.generate_time_slots(dentist)
         
-        # 2. Dolu (pending/approved) slotları veritabanından al
-        booked_slots = self.adapter.get_booked_slots(date, dentist_id)
+        # 2. Dolu randevuların başlangıç ve sürelerini al
+        booked_data = self.adapter.get_booked_slots(date, dentist_id)
         
-        # 3. Boş slotları hesapla
-        available_slots = [
-            slot for slot in all_possible_slots if slot not in booked_slots
-        ]
+        # 3. Boş slotları interval mantığıyla hesapla
+        available_slots = []
+        for slot_start_str in all_possible_slots:
+            s_start = _time_to_minutes(_parse_time(slot_start_str))
+            # Yeni alınacak randevunun tahmini bitişi (doktorun standart süresi kadar)
+            s_end = s_start + dentist.slot_duration
+            
+            is_busy = False
+            for booking in booked_data:
+                b_start = _time_to_minutes(_parse_time(booking['time_slot']))
+                # ⭐ KRİTİK: Mevcut randevunun süresi + senin istediğin 15 dk tampon süre
+                b_end = b_start + booking['duration_minutes'] + self.buffer_minutes
+                
+                # Çakışma Denklemi: (Yeni_Başlangıç < Mevcut_Bitiş) VE (Yeni_Bitiş > Mevcut_Başlangıç)
+                if s_start < b_end and s_end > b_start:
+                    is_busy = True
+                    break
+            
+            if not is_busy:
+                available_slots.append(slot_start_str)
         
         return available_slots
 
@@ -130,10 +138,5 @@ class SlotService:
             return False
 
     def reserve_slot(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Slot rezervasyonu, yani create_appointment çağrısı (ApprovalService'e devredilecektir).
-        """
-        # SlotService, sadece müsaitlik kontrolünden sorumlu olduğu için 
-        # bu metod, ApprovalService'in çağrılacağı bir placeholder görevi görür.
-        # Asıl randevu oluşturma mantığı sonraki adımda (Adım 17) tanımlanacaktır.
+        """Placeholder for approval service devredilecek metod."""
         return {"status": "validation_passed", "message": "Müsaitlik kontrolü yapıldı."}
